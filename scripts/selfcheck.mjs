@@ -413,6 +413,9 @@ const { initRepo } = await import('@/db/runtime')
 const { useApp } = await import('@/chat/store')
 const { emptySetting } = await import('@/chat/settings')
 const { presetOverrides } = await import('@/chat/vault')
+const { levelsForModel, reasoningParams, labelOf, defaultLevels } = await import('@/chat/reasoning')
+const { buildChatRequest } = await import('@/chat/protocol')
+const { normalize } = await import('@/chat/models')
 
 await initPlatform()
 await initRepo()
@@ -472,6 +475,64 @@ ok(body.messages.some((m) => m.content === '节目叫什么'), '用户消息在'
 await st().startWithSettings([doc.id])
 await st().send('再说一次')
 ok(captured.top_p === 0.95 && captured.max_tokens === 999, `没有预设时回落到全局参数（top_p ${captured.top_p} / ${captured.max_tokens}）`)
+
+/* ---------------- 思考强度 ---------------- */
+section('思考强度')
+
+ok(levelsForModel('openai', undefined).length === 0, '没有模型信息时不显示档位')
+ok(levelsForModel('openai', { reasoning: false }).length === 0, '不支持思考的模型没有档位')
+ok(levelsForModel('openai', { reasoning: true }).join(',') === 'off,low,medium,high', '只声明支持思考时用默认四档')
+ok(levelsForModel('gemini', { reasoning: true }).join(',') === 'off,low,high', 'Gemini 默认三档')
+ok(
+  levelsForModel('openai', { reasoning: true, reasoningLevels: ['low', 'high'] }).join(',') === 'low,high',
+  '服务商声明了档位就用它的（原样，不补默认）'
+)
+
+ok(reasoningParams('openai', undefined).reasoningEffort === undefined, '关掉时不发任何参数')
+ok(reasoningParams('openai', 'off').reasoningEffort === undefined, 'off 不发参数')
+ok(reasoningParams('openai', 'medium').reasoningEffort === 'medium', 'OpenAI 用 reasoning_effort')
+ok(reasoningParams('openai', 'xhigh').reasoningEffort === 'high', 'xhigh 收敛成 high（API 只认四档）')
+ok(reasoningParams('anthropic', 'high').budgetTokens === 8192, 'Anthropic 转成预算 token')
+ok(reasoningParams('gemini', 'low').thinkingBudget === 2048, 'Gemini 转成 thinkingBudget')
+ok(labelOf('medium') === '中' && labelOf('off') === '关', '档位有中文标签')
+ok(labelOf('unknown-level') === 'unknown-level', '未知档位原样显示')
+
+// 三种协议的请求体
+const msgs = [{ role: 'user', content: 'hi' }]
+const auth = { baseUrl: 'https://example.com/v1', apiKey: 'k' }
+const openaiBody = JSON.parse(
+  buildChatRequest('openai', auth, { model: 'm', messages: msgs, stream: true, reasoningLevel: 'high' }).body
+)
+ok(openaiBody.reasoning_effort === 'high', 'OpenAI 请求体带 reasoning_effort')
+
+const anthropicBody = JSON.parse(
+  buildChatRequest('anthropic', auth, { model: 'm', messages: msgs, stream: true, reasoningLevel: 'medium', maxTokens: 512 }).body
+)
+ok(anthropicBody.thinking?.budget_tokens === 4096, 'Anthropic 请求体带 thinking.budget_tokens')
+ok(anthropicBody.max_tokens > anthropicBody.thinking.budget_tokens, `max_tokens 自动大于预算（${anthropicBody.max_tokens} > 4096）`)
+
+const geminiBody = JSON.parse(
+  buildChatRequest('gemini', { baseUrl: 'https://g/v1beta', apiKey: 'k' }, { model: 'm', messages: msgs, stream: true, reasoningLevel: 'low' }).body
+)
+ok(geminiBody.generationConfig?.thinkingConfig?.thinkingBudget === 2048, 'Gemini 请求体带 thinkingConfig')
+
+const openaiOff = JSON.parse(
+  buildChatRequest('openai', auth, { model: 'm', messages: msgs, stream: true, reasoningLevel: 'off' }).body
+)
+ok(!('reasoning_effort' in openaiOff), '关掉时请求体里没有该字段')
+
+// 服务商元数据里的档位能被解析出来
+const parsedModels = normalize(
+  { data: [{ id: 'x', supports_reasoning: true, reasoning_efforts: ['low', 'medium'] }] },
+  'openai'
+)
+ok(parsedModels[0].reasoning === true && parsedModels[0].reasoningLevels?.join(',') === 'low,medium', '从模型元数据解析思考档位')
+
+// 端到端：配置里的档位真的进了请求
+st().saveConfig({ reasoningLevel: 'high' })
+await st().startWithSettings([doc.id])
+await st().send('测试档位')
+ok(captured.reasoning_effort === 'high', `配置的档位进了请求（${captured.reasoning_effort}）`)
 
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))

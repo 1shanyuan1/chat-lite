@@ -19,6 +19,8 @@ export interface ChatConfig {
   /** 采样参数，可由寄存区的预设覆盖 */
   topP?: number
   maxTokens?: number
+  /** 思考强度档位 */
+  reasoningLevel?: string
 }
 
 export interface WireTurn {
@@ -43,6 +45,7 @@ export async function* streamChat(
           system: config.systemPrompt || undefined,
           topP: config.topP,
           maxTokens: config.maxTokens,
+          reasoningLevel: config.reasoningLevel,
           stream: true,
           // Gemini 与 Anthropic 原生协议自带 usage，不需要这个开关
           includeUsage: includeUsage && protocol === 'openai',

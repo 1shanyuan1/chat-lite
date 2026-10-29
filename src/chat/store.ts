@@ -17,6 +17,9 @@ import { deletePreset, deletePrompt, listPresets, listPrompts, savePreset, saveP
 import { contextWindow, matchWorldEntries, renderWorldEntries } from './lore'
 import { composeSystemPrompt, DEFAULT_PACK_ID, findPack, renderTemplate } from './packs'
 import { PROVIDERS } from './providers'
+import { fetchModels, loadCachedModels, type ModelInfo } from './models'
+import { levelsForModel } from './reasoning'
+import { resolveProtocol } from './protocol'
 import {
   emptyUsage,
   estimateCacheHit,
@@ -87,6 +90,13 @@ interface AppState {
   settings: SettingDoc[]
   presets: PresetItem[]
   prompts: PromptItem[]
+  models: ModelInfo[]
+  modelsLoading: boolean
+  modelsError: string | null
+
+  loadModels: (force?: boolean) => Promise<void>
+  selectModel: (model: ModelInfo) => void
+  setReasoningLevel: (level: string | undefined) => void
 
   importSetting: (doc: SettingDoc) => void
   removeSetting: (id: string) => void
@@ -256,6 +266,9 @@ export const useApp = create<AppState>()((set, get) => {
     settings: [],
     presets: [],
     prompts: [],
+    models: [],
+    modelsLoading: false,
+    modelsError: null,
 
     async init() {
       set({
@@ -287,6 +300,44 @@ export const useApp = create<AppState>()((set, get) => {
 
     setDrawer: (open) => set({ drawerOpen: open }),
     setSettings: (open) => set({ settingsOpen: open }),
+
+    /** 拉模型列表：先吃缓存，force 时强制重拉 */
+    async loadModels(force = false) {
+      const { config } = get()
+      const protocol = resolveProtocol(config.protocol, config.baseUrl)
+      if (!force) {
+        const cached = loadCachedModels(config.baseUrl, protocol)
+        if (cached) {
+          set({ models: cached })
+          return
+        }
+      }
+      set({ modelsLoading: true, modelsError: null })
+      try {
+        set({ models: await fetchModels(config) })
+      } catch (e) {
+        set({ modelsError: humanizeError(e) })
+      } finally {
+        set({ modelsLoading: false })
+      }
+    },
+
+    /** 选模型：顺带记住上下文长度，档位不合法就重置 */
+    selectModel(model) {
+      const { config } = get()
+      const protocol = resolveProtocol(config.protocol, config.baseUrl)
+      const levels = levelsForModel(protocol, model)
+      const keepLevel = config.reasoningLevel && levels.includes(config.reasoningLevel)
+      get().saveConfig({
+        model: model.id,
+        contextLimit: model.contextLength ?? config.contextLimit,
+        reasoningLevel: keepLevel ? config.reasoningLevel : undefined,
+      })
+    },
+
+    setReasoningLevel(level) {
+      get().saveConfig({ reasoningLevel: level })
+    },
 
     importSetting(doc) {
       set({ settings: saveSetting(doc) })

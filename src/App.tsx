@@ -5,6 +5,7 @@ import type { ChatConfig } from '@/chat/client'
 import { humanizeError } from '@/chat/errors'
 import { fetchModels, loadCachedModels, type ModelInfo } from '@/chat/models'
 import { resolveProtocol, type ProtocolSetting } from '@/chat/protocol'
+import { isOff, labelOf, levelsForModel } from '@/chat/reasoning'
 import { BUILTIN_PACKS, findPack } from '@/chat/packs'
 import { findProvider, PROVIDER_GROUPS, PROVIDERS, PROVIDER_LABEL_CUSTOM, type Provider } from '@/chat/providers'
 import {
@@ -419,11 +420,38 @@ function SettingsSheet() {
 }
 
 function Composer({ meter }: { meter?: React.ReactNode }) {
-  const { draft, setDraft, send, streamingTurnId, stop, sessions, currentId, config, setPack, applyAction } = useApp()
+  const {
+    draft,
+    setDraft,
+    send,
+    streamingTurnId,
+    stop,
+    sessions,
+    currentId,
+    config,
+    setPack,
+    applyAction,
+    models,
+    modelsLoading,
+    modelsError,
+    loadModels,
+    selectModel,
+    setReasoningLevel,
+  } = useApp()
   const ref = useRef<HTMLTextAreaElement>(null)
   const [packOpen, setPackOpen] = useState(false)
+  const [modelOpen, setModelOpen] = useState(false)
+  const [reasonOpen, setReasonOpen] = useState(false)
 
   const pack = findPack(sessions.find((s) => s.id === currentId)?.packId ?? config.packId)
+  const protocol = resolveProtocol(config.protocol, config.baseUrl)
+  const currentModel = models.find((m) => m.id === config.model)
+  const levels = levelsForModel(protocol, currentModel)
+
+  useEffect(() => {
+    if (models.length === 0 && !modelsLoading) void loadModels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.baseUrl, config.protocol])
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -440,6 +468,96 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
   return (
     <div className="border-t border-neutral-100 bg-white px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-1.5">
       {meter}
+
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <button
+          className={`flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
+            modelOpen ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+          }`}
+          onClick={() => {
+            setReasonOpen(false)
+            setModelOpen((v) => !v)
+          }}
+        >
+          <span className="max-w-[150px] truncate">{config.model || '选模型'}</span>
+          <span className="shrink-0 opacity-60">{modelOpen ? '×' : '▾'}</span>
+        </button>
+
+        {levels.length > 0 && (
+          <button
+            className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
+              reasonOpen ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+            }`}
+            onClick={() => {
+              setModelOpen(false)
+              setReasonOpen((v) => !v)
+            }}
+          >
+            思考 {labelOf(config.reasoningLevel ?? 'off')}
+            <span className="opacity-60">{reasonOpen ? '×' : '▾'}</span>
+          </button>
+        )}
+
+        {modelsLoading && <span className="text-[10px] text-neutral-400">拉取模型…</span>}
+      </div>
+
+      {modelOpen && (
+        <div className="mb-2 rounded-lg bg-neutral-50 p-2">
+          {modelsError && <p className="mb-1 text-[10px] text-red-500">{modelsError}</p>}
+          {models.length === 0 && !modelsLoading ? (
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-neutral-400">还没有模型列表</span>
+              <button className="text-[10px] text-blue-600" onClick={() => void loadModels(true)}>
+                拉取
+              </button>
+            </div>
+          ) : (
+            <ModelPicker
+              models={models}
+              value={config.model}
+              onPick={(m) => {
+                selectModel(m)
+                setModelOpen(false)
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      {reasonOpen && (
+        <div className="mb-2 rounded-lg bg-neutral-50 p-2">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-[10px] text-neutral-400">思考强度</span>
+            <button className="text-[10px] text-blue-600" onClick={() => void loadModels(true)}>
+              刷新模型信息
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {levels.map((level) => {
+              const active = isOff(config.reasoningLevel) ? level === 'off' : config.reasoningLevel === level
+              return (
+                <button
+                  key={level}
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+                    active ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600'
+                  }`}
+                  onClick={() => {
+                    setReasoningLevel(level)
+                    setReasonOpen(false)
+                  }}
+                >
+                  {labelOf(level)}
+                </button>
+              )
+            })}
+          </div>
+          {!currentModel?.reasoningLevels && (
+            <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-400">
+              该服务商未声明档位，按协议给的是默认四档
+            </p>
+          )}
+        </div>
+      )}
 
       {pack.actions.length > 0 && (
         <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto pb-0.5">

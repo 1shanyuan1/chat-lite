@@ -9,6 +9,10 @@ export interface ModelInfo {
   outputPrice?: string
   vision?: boolean
   tools?: boolean
+  /** 是否支持思考 */
+  reasoning?: boolean
+  /** 服务商声明的思考档位；没有就用协议默认 */
+  reasoningLevels?: string[]
   label?: string
 }
 
@@ -41,6 +45,26 @@ function saveCachedModels(baseUrl: string, protocol: Protocol, models: ModelInfo
 
 function pickNumber(source: unknown): number | undefined {
   return typeof source === 'number' && Number.isFinite(source) ? source : undefined
+}
+
+/** 各家字段名不一，挨个试一遍 */
+function pickLevels(item: Record<string, unknown>): string[] | undefined {
+  const candidates = [
+    item.reasoning_effort_levels,
+    item.reasoning_efforts,
+    item.supported_reasoning_efforts,
+    item.thinking_levels,
+    item.thinking_efforts,
+    (item.reasoning as Record<string, unknown> | undefined)?.levels,
+    (item.capabilities as Record<string, unknown> | undefined)?.reasoning &&
+      ((item.capabilities as Record<string, Record<string, unknown>>).reasoning?.efforts as unknown),
+  ]
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length > 0) {
+      return candidate.map((v) => String(v)).filter(Boolean)
+    }
+  }
+  return undefined
 }
 
 function pickString(source: unknown): string | undefined {
@@ -89,6 +113,8 @@ export function normalize(payload: unknown, protocol: Protocol = 'openai'): Mode
       outputPrice: pickString(pricing.completion),
       vision: item.supports_vision === true,
       tools: item.supports_tools === true,
+      reasoning: item.supports_reasoning === true || pickLevels(item) !== undefined,
+      reasoningLevels: pickLevels(item),
     })
   }
 

@@ -1,4 +1,5 @@
 import type { HttpRequest } from '@/platform'
+import { reasoningParams } from './reasoning'
 
 export type Protocol = 'openai' | 'anthropic' | 'gemini'
 export type ProtocolSetting = Protocol | 'auto'
@@ -39,10 +40,13 @@ export function buildChatRequest(
     includeUsage?: boolean
     topP?: number
     maxTokens?: number
+    /** 思考强度档位，off 或不传则不注入 */
+    reasoningLevel?: string
   }
 ): HttpRequest {
   const base = trimBase(auth.baseUrl)
-  const { model, messages, system, stream, includeUsage, topP, maxTokens } = options
+  const { model, messages, system, stream, includeUsage, topP, maxTokens, reasoningLevel } = options
+  const reason = reasoningParams(protocol, reasoningLevel)
 
   if (protocol === 'anthropic') {
     return {
@@ -57,8 +61,12 @@ export function buildChatRequest(
       },
       body: JSON.stringify({
         model,
-        max_tokens: maxTokens ?? 8192,
+        // 思考预算必须小于 max_tokens，否则 Anthropic 直接报错
+        max_tokens: reason.budgetTokens
+          ? Math.max(maxTokens ?? 8192, reason.budgetTokens + 2048)
+          : (maxTokens ?? 8192),
         ...(topP !== undefined ? { top_p: topP } : {}),
+        ...(reason.budgetTokens ? { thinking: { type: 'enabled', budget_tokens: reason.budgetTokens } } : {}),
         ...(system ? { system } : {}),
         messages,
         stream,
@@ -77,11 +85,14 @@ export function buildChatRequest(
           parts: [{ text: m.content }],
         })),
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-        ...(topP !== undefined || maxTokens !== undefined
+        ...(topP !== undefined || maxTokens !== undefined || reason.thinkingBudget !== undefined
           ? {
               generationConfig: {
                 ...(topP !== undefined ? { topP } : {}),
                 ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
+                ...(reason.thinkingBudget !== undefined
+                  ? { thinkingConfig: { thinkingBudget: reason.thinkingBudget } }
+                  : {}),
               },
             }
           : {}),
@@ -103,6 +114,7 @@ export function buildChatRequest(
       stream,
       ...(topP !== undefined ? { top_p: topP } : {}),
       ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
+      ...(reason.reasoningEffort ? { reasoning_effort: reason.reasoningEffort } : {}),
       // 只有 OpenAI 兼容协议支持这个字段，部分网关会因此报 400，上层有降级重试
       ...(stream && includeUsage ? { stream_options: { include_usage: true } } : {}),
     }),
