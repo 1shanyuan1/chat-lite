@@ -46,7 +46,7 @@ export function buildChatRequest(
 ): HttpRequest {
   const base = trimBase(auth.baseUrl)
   const { model, messages, system, stream, includeUsage, topP, maxTokens, reasoningLevel } = options
-  const reason = reasoningPayload(protocol, reasoningLevel)
+  const reason = reasoningPayload(protocol, reasoningLevel, auth.baseUrl)
 
   if (protocol === 'anthropic') {
     return {
@@ -119,6 +119,7 @@ export function buildChatRequest(
       ...(topP !== undefined ? { top_p: topP } : {}),
       ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
       ...(reason.effort ? { reasoning_effort: reason.effort } : {}),
+      ...(reason.enableThinking !== undefined ? { enable_thinking: reason.enableThinking } : {}),
       // 只有 OpenAI 兼容协议支持这个字段，部分网关会因此报 400，上层有降级重试
       ...(stream && includeUsage ? { stream_options: { include_usage: true } } : {}),
     }),

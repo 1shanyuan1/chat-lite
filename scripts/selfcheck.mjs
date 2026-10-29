@@ -476,7 +476,8 @@ ok(captured.top_p === 0.95 && captured.max_tokens === 999, `没有预设时回�
 /* ---------------- 思考强度 ---------------- */
 section('思考强度')
 
-const { reasoningControl, reasoningPayload } = await import('@/chat/reasoning')
+const { reasoningControl, reasoningPayload, usesEnableThinking } = await import('@/chat/reasoning')
+const { inferReasoning } = await import('@/chat/models')
 const { buildChatRequest } = await import('@/chat/protocol')
 const { normalize } = await import('@/chat/models')
 
@@ -499,6 +500,23 @@ ok(reasoningPayload('openai', 'high').effort === 'high', '档位直传 OpenAI')
 ok(reasoningPayload('anthropic', 'high').budgetTokens === 8192, '档位换算成 Anthropic 预算')
 ok(reasoningPayload('gemini', 'low').thinkingBudget === 2048, '档位换算成 Gemini 预算')
 
+// 国内网关走 enable_thinking（实测硅基流动：qwen3/deepseek 认它，reasoning_effort 被忽略）
+ok(usesEnableThinking('https://api.siliconflow.cn/v1'), '硅基流动识别为 enable_thinking 网关')
+ok(usesEnableThinking('https://dashscope.aliyuncs.com/compatible-mode/v1'), '百炼识别为网关')
+ok(!usesEnableThinking('https://api.openai.com/v1'), 'OpenAI 官方不是网关')
+ok(!usesEnableThinking(undefined), '没有地址时不判定为网关')
+ok(reasoningPayload('openai', 'off', 'https://api.siliconflow.cn/v1').enableThinking === false, '网关关闭用 enable_thinking=false')
+ok(reasoningPayload('openai', 'on', 'https://api.siliconflow.cn/v1').enableThinking === true, '网关开启用 enable_thinking=true')
+ok(reasoningPayload('openai', 'off', 'https://api.openai.com/v1').effort === 'none', '官方仍然用 reasoning_effort=none')
+
+// 模型名推断（网关普遍只给 id）
+ok(inferReasoning('Qwen/Qwen3-8B'), 'qwen3 推断为支持思考')
+ok(inferReasoning('deepseek-ai/DeepSeek-V4-Flash'), 'deepseek-v4 推断为支持思考')
+ok(inferReasoning('zai-org/GLM-5.3-Flash'), 'glm-5 推断为支持思考')
+ok(inferReasoning('openai/gpt-5'), 'gpt-5 推断为支持思考')
+ok(!inferReasoning('Qwen/Qwen2.5-7B-Instruct'), 'qwen2.5 不误判')
+ok(!inferReasoning('baai/bge-m3'), '向量模型不误判')
+
 // 请求体
 const msgs = [{ role: 'user', content: 'hi' }]
 const auth = { baseUrl: 'https://example.com/v1', apiKey: 'k' }
@@ -507,6 +525,16 @@ const bodyOf = (protocol, opts) => JSON.parse(buildChatRequest(protocol, auth, {
 ok(bodyOf('openai', { reasoningLevel: 'high' }).reasoning_effort === 'high', 'OpenAI 请求体带 reasoning_effort')
 ok(bodyOf('openai', { reasoningLevel: 'off' }).reasoning_effort === 'none', 'OpenAI 关闭时发 none')
 ok(!('reasoning_effort' in bodyOf('openai', {})), '默认不带 reasoning_effort')
+
+const gatewayBody = JSON.parse(
+  buildChatRequest(
+    'openai',
+    { baseUrl: 'https://api.siliconflow.cn/v1', apiKey: 'k' },
+    { model: 'm', messages: msgs, stream: true, reasoningLevel: 'off' }
+  ).body
+)
+ok(gatewayBody.enable_thinking === false, '网关请求体带 enable_thinking=false')
+ok(!('reasoning_effort' in gatewayBody), '网关请求体不带 reasoning_effort')
 
 const anthOn = bodyOf('anthropic', { reasoningLevel: 'medium', maxTokens: 512 })
 ok(anthOn.thinking?.type === 'enabled' && anthOn.thinking.budget_tokens === 4096, 'Anthropic 开启带 budget_tokens')

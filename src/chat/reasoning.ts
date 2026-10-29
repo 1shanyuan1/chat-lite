@@ -50,6 +50,34 @@ export function reasoningControl(
   return { kind: 'none' }
 }
 
+/**
+ * 国内聚合网关普遍不认 reasoning_effort，而是认 enable_thinking。
+ * 实测硅基流动：qwen3 / deepseek 用 enable_thinking:false 能真正关闭，reasoning_effort:none 被忽略。
+ */
+const ENABLE_THINKING_HOSTS = [
+  'siliconflow.cn',
+  'dashscope.aliyuncs.com',
+  'bigmodel.cn',
+  'moonshot.cn',
+  'ark.cn-beijing.volces.com',
+  'deepseek.com',
+  'hunyuan.cloud.tencent.com',
+  'stepfun.com',
+  'baichuan-ai.com',
+  'sensenova.cn',
+  'ppinfra.com',
+  'minimax.chat',
+  'qianfan.baidubce.com',
+  'spark-api-open.xf-yun.com',
+  'tokenrhythm.studio',
+]
+
+export function usesEnableThinking(baseUrl?: string): boolean {
+  if (!baseUrl) return false
+  const url = baseUrl.toLowerCase()
+  return ENABLE_THINKING_HOSTS.some((host) => url.includes(host))
+}
+
 export interface ReasoningPayload {
   /** OpenAI 兼容：reasoning_effort */
   effort?: string
@@ -59,30 +87,37 @@ export interface ReasoningPayload {
   budgetTokens?: number
   /** Gemini：thinkingConfig.thinkingBudget（0 关闭，-1 动态） */
   thinkingBudget?: number
+  /** 国内网关：enable_thinking */
+  enableThinking?: boolean
 }
 
 /**
  * 把界面上的值翻译成各家请求字段。
  * undefined 表示「不干预」——不发任何参数，遵循服务商自己的默认。
  */
-export function reasoningPayload(protocol: Protocol, value: ReasoningValue): ReasoningPayload {
+export function reasoningPayload(
+  protocol: Protocol,
+  value: ReasoningValue,
+  baseUrl?: string
+): ReasoningPayload {
   if (value === undefined) return {}
+  const gateway = usesEnableThinking(baseUrl)
 
   if (value === 'off') {
     if (protocol === 'anthropic') return { disabled: true }
     if (protocol === 'gemini') return { thinkingBudget: 0 }
-    return { effort: 'none' }
+    return gateway ? { enableThinking: false } : { effort: 'none' }
   }
 
   if (value === 'on') {
     if (protocol === 'anthropic') return { budgetTokens: TOGGLE_ON_BUDGET }
     if (protocol === 'gemini') return { thinkingBudget: -1 }
-    // OpenAI 兼容没有「开启」参数，不干预即默认开启
-    return {}
+    // 开启态：网关用 enable_thinking，官方 API 不干预即默认开启
+    return gateway ? { enableThinking: true } : {}
   }
 
   const budget = LEVEL_BUDGET[value] ?? LEVEL_BUDGET.medium
   if (protocol === 'anthropic') return { budgetTokens: budget }
   if (protocol === 'gemini') return { thinkingBudget: budget }
-  return { effort: value }
+  return gateway ? { enableThinking: true, effort: value } : { effort: value }
 }

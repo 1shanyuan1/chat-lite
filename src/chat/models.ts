@@ -67,6 +67,29 @@ function pickLevels(item: Record<string, unknown>): string[] | undefined {
   return undefined
 }
 
+/**
+ * 元数据没声明时按模型名推断——国内网关普遍只给 id。
+ * 宁可多给一个开关（关掉无副作用），也不要让用户完全没得选。
+ */
+const REASONING_PATTERNS = [
+  /qwen3/i,
+  /qwq/i,
+  /deepseek-(r1|v3\.2|v4|reasoner)/i,
+  /glm-(4\.5|5|z)/i,
+  /kimi-k2/i,
+  /minimax-m[23]/i,
+  /think/i,
+  /reason/i,
+  /(^|\/)o[1-4](-|$)/i,
+  /gpt-5/i,
+  /gemini-(2\.[5-9]|3)/i,
+  /grok-[3-9]/i,
+]
+
+export function inferReasoning(modelId: string): boolean {
+  return REASONING_PATTERNS.some((re) => re.test(modelId))
+}
+
 function pickString(source: unknown): string | undefined {
   if (typeof source === 'string' && source) return source
   if (typeof source === 'number') return String(source)
@@ -113,7 +136,8 @@ export function normalize(payload: unknown, protocol: Protocol = 'openai'): Mode
       outputPrice: pickString(pricing.completion),
       vision: item.supports_vision === true,
       tools: item.supports_tools === true,
-      reasoning: item.supports_reasoning === true || pickLevels(item) !== undefined,
+      reasoning:
+        item.supports_reasoning === true || pickLevels(item) !== undefined || inferReasoning(id.replace(/^models\//, '')),
       reasoningLevels: pickLevels(item),
     })
   }
