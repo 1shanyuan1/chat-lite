@@ -23,6 +23,8 @@ export interface Platform {
   openLink(url: string): Promise<void>
   /** 保存文本文件：Web 走下载，原生走「写入缓存 + 系统分享」 */
   exportTextFile(filename: string, content: string, mime?: string): Promise<void>
+  /** 保存二进制文件（组合包等） */
+  exportBinaryFile(filename: string, bytes: Uint8Array, mime?: string): Promise<void>
 }
 
 export async function* readResponseStream(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {

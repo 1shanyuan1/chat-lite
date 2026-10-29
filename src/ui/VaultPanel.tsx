@@ -1,5 +1,8 @@
 import { useState } from 'react'
+import { buildBundle, bundleFileName, collectBundleItems } from '@/chat/bundle-export'
 import { FOLDER_CONTENTS, type FolderArea } from '@/chat/folders'
+import { humanizeError } from '@/chat/errors'
+import { platform } from '@/platform'
 import { emptySetting, type DocKind, type SettingDoc } from '@/chat/settings'
 import { useApp } from '@/chat/store'
 import type { PresetItem, PromptItem } from '@/chat/vault'
@@ -119,6 +122,7 @@ export default function VaultPanel() {
   const [editingPrompt, setEditingPrompt] = useState<PromptItem | null>(null)
   const [menu, setMenu] = useState<'new' | 'folder' | null>(null)
   const [folderDraft, setFolderDraft] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   const currentFolder = folders.find((f) => f.id === folderId)
   const areaFolders = folders.filter((f) => f.area === area)
@@ -146,6 +150,22 @@ export default function VaultPanel() {
     doc.folderId = folderId ?? undefined
     doc.name = kind === 'character' ? '新角色' : kind === 'world' ? '新世界书' : '新设定'
     setEditing(doc)
+  }
+
+  const onExport = async () => {
+    if (!currentFolder) return
+    const folderDocs = settings.filter((d) => d.folderId === currentFolder.id)
+    const folderPresets = presets.filter((p) => p.folderId === currentFolder.id)
+    if (folderDocs.length === 0 && folderPresets.length === 0) return
+    setExporting(true)
+    try {
+      const items = collectBundleItems(folderDocs, folderPresets)
+      await platform().exportBinaryFile(bundleFileName(currentFolder.name), buildBundle(currentFolder.name, items))
+    } catch (e) {
+      alert(humanizeError(e))
+    } finally {
+      setExporting(false)
+    }
   }
 
   const onImport = async (files: FileList | null) => {
@@ -243,9 +263,18 @@ export default function VaultPanel() {
         )}
 
         {currentFolder ? (
-          <button className="rounded-lg bg-neutral-900 px-2 py-1 text-[11px] text-white" onClick={() => setMenu('new')}>
-            新建
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              className="rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-600 disabled:opacity-40"
+              disabled={exporting || countInFolder(currentFolder.id) === 0}
+              onClick={() => void onExport()}
+            >
+              {exporting ? '打包中…' : '导出'}
+            </button>
+            <button className="rounded-lg bg-neutral-900 px-2 py-1 text-[11px] text-white" onClick={() => setMenu('new')}>
+              新建
+            </button>
+          </div>
         ) : (
           <div className="flex gap-1.5">
             {area !== 'common' && (

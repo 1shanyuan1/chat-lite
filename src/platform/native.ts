@@ -108,6 +108,21 @@ export const nativePlatform: Platform = {
     await Browser.open({ url })
   },
 
+  async exportBinaryFile(filename: string, bytes: Uint8Array) {
+    const { Filesystem, Directory } = await import('@capacitor/filesystem')
+    const { Share } = await import('@capacitor/share')
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    }
+    const written = await Filesystem.writeFile({
+      path: filename,
+      data: btoa(binary),
+      directory: Directory.Cache,
+    })
+    await Share.share({ title: filename, url: written.uri })
+  },
+
   async exportTextFile(filename: string, content: string) {
     const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem')
     const { Share } = await import('@capacitor/share')

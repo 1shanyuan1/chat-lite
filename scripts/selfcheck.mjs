@@ -682,6 +682,56 @@ ok(!FOLDER_CONTENTS.writing.some((i) => i.kind === 'character'), '写作区不�
 ok(areaOfKind('character') === 'tavern' && areaOfKind('world') === 'tavern', '角色卡与世界书归酒馆')
 ok(areaOfKind('setting') === 'writing', '设定归写作')
 
+/* ---------------- 文件夹导出组合包 ---------------- */
+section('导出组合包')
+
+const { collectBundleItems, buildBundle, bundleFileName } = await import('@/chat/bundle-export')
+
+const exportDocs = [
+  { ...fromCard, id: 'c1', folderId: 'f1' },
+  { ...fromWorld, id: 'w1', folderId: 'f1' },
+  { ...fromText, id: 's1', folderId: 'f1' },
+]
+const exportPresets = [{ id: 'p1', name: '长文', topP: 0.9, maxTokens: 4096, folderId: 'f1', createdAt: 0, updatedAt: 0 }]
+const items = collectBundleItems(exportDocs, exportPresets)
+
+ok(items.length === 4, `导出 4 个条目（实际 ${items.length}）`)
+ok(items.map((i) => i.kind).join(',') === 'character,world,setting,preset', '类型顺序正确')
+ok(items.every((i) => i.file && !/[\\/:*?"<>|]/.test(i.file)), '文件名过滤了非法字符')
+
+const zipBytes = buildBundle('星海宇宙', items)
+const zipped = readBundle(zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength))
+ok(zipped.length === 5, `压缩包里有 manifest + 4 个文件（实际 ${zipped.length}）`)
+
+const manifestFile = zipped.find((e) => e.path === 'manifest.json')
+ok(Boolean(manifestFile), '带 manifest.json')
+const manifest = JSON.parse(entryTextOf(manifestFile))
+ok(manifest.app === 'chat-lite' && manifest.version === 1, 'manifest 标了来源与版本')
+ok(manifest.items.length === 4, 'manifest 列出 4 个条目')
+ok(manifest.items.every((i) => typeof i.kind === 'string' && typeof i.file === 'string'), '每个条目都有类型与文件名')
+
+// 往返：导出的内容能被自己的解析器读回来
+const cardFile = zipped.find((e) => e.path.endsWith('.card.json'))
+const backToCard = normalizeCard(JSON.parse(entryTextOf(cardFile)))
+ok(backToCard.name === fromCard.name, '角色卡往返名字不变')
+ok(backToCard.firstMessage?.includes('{{user}}'), '开场白往返保住宏')
+ok(backToCard.worldInfo.length === fromCard.entries.length, '卡内世界书条数往返一致')
+
+const worldFile = zipped.find((e) => e.path.endsWith('.world.json'))
+const backToWorld = toWorldItem(JSON.parse(entryTextOf(worldFile)), 'x')
+ok(backToWorld.entries.length === fromWorld.entries.length, '世界书往返条数一致')
+
+const presetFile = zipped.find((e) => e.path.endsWith('.preset.json'))
+const backToPreset = JSON.parse(entryTextOf(presetFile))
+ok(backToPreset.top_p === 0.9 && backToPreset.max_tokens === 4096, '预设参数往返一致')
+
+// 同名文件自动去重
+const dupItems = collectBundleItems([{ ...fromCard, id: 'a' }, { ...fromCard, id: 'b' }], [])
+ok(dupItems[0].file !== dupItems[1].file, '同名条目不会互相覆盖')
+
+ok(bundleFileName('星海宇宙').endsWith('.chatlite.zip'), '导出文件名带 .chatlite.zip 后缀')
+ok(!/[\\/:*?"<>|]/.test(bundleFileName('a/b:c*d')), '文件夹名里的非法字符被替换')
+
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))
 console.log(`通过 ${passed} 项，失败 ${failed} 项`)

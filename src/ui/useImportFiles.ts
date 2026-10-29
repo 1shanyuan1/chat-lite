@@ -9,7 +9,7 @@ import {
   resolveEmbededUri,
 } from '@/chat/bundle'
 import { extractCardFromPng, normalizeCard } from '@/chat/characters'
-import { settingFromCard, settingFromText, settingFromWorld } from '@/chat/settings'
+import { emptySetting, settingFromCard, settingFromText, settingFromWorld } from '@/chat/settings'
 import { detectKind, toPresetItem, toPromptItem, toWorldItem } from '@/chat/vault'
 import { useApp } from '@/chat/store'
 
@@ -63,6 +63,52 @@ export function useImportFiles() {
     throw new Error(`${name} 认不出是什么类型`)
   }
 
+  /** manifest 里写明了类型，就不需要再猜 */
+  const importExplicit = (kind: string, payload: unknown, name: string): string | null => {
+    if (kind === 'character') {
+      const doc = settingFromCard(normalizeCard(payload))
+      importSetting(doc)
+      return doc.id
+    }
+    if (kind === 'world') {
+      const doc = settingFromWorld(toWorldItem(payload, name))
+      importSetting(doc)
+      return doc.id
+    }
+    if (kind === 'setting') {
+      const raw = (payload ?? {}) as Record<string, unknown>
+      const doc = emptySetting('setting')
+      doc.name = typeof raw.name === 'string' && raw.name ? raw.name : name
+      doc.body = typeof raw.body === 'string' ? raw.body : ''
+      doc.firstMessage = typeof raw.firstMessage === 'string' ? raw.firstMessage : undefined
+      const list = Array.isArray(raw.entries) ? raw.entries : []
+      doc.entries = list
+        .filter((e): e is Record<string, unknown> => Boolean(e && typeof e === 'object'))
+        .map((e) => ({
+          id: crypto.randomUUID(),
+          keys: Array.isArray(e.keys) ? e.keys.map(String) : [],
+          content: typeof e.content === 'string' ? e.content : '',
+          enabled: e.enabled !== false,
+          constant: e.constant === true,
+        }))
+      importSetting(doc)
+      return doc.id
+    }
+    if (kind === 'preset') {
+      const raw = (payload ?? {}) as Record<string, unknown>
+      savePreset({
+        id: crypto.randomUUID(),
+        name: typeof raw.name === 'string' && raw.name ? raw.name : name,
+        topP: typeof raw.top_p === 'number' ? raw.top_p : undefined,
+        maxTokens: typeof raw.max_tokens === 'number' ? raw.max_tokens : undefined,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+      return null
+    }
+    return null
+  }
+
   const importPng = (name: string, buffer: ArrayBuffer): string => {
     const raw = extractCardFromPng(buffer)
     if (!raw) throw new Error(`${name} 里没有角色卡数据`)
@@ -75,6 +121,26 @@ export function useImportFiles() {
   const importBundle = async (file: File): Promise<string[]> => {
     const entries = readBundle(await file.arrayBuffer())
     const ids: string[] = []
+
+    // 我们自己的组合包：manifest 写明类型，按它来
+    const manifestEntry = entries.find((e) => e.path === 'manifest.json')
+    if (manifestEntry) {
+      const manifest = JSON.parse(entryText(manifestEntry)) as {
+        app?: string
+        items?: Array<{ file: string; kind: string; name: string }>
+      }
+      for (const item of manifest.items ?? []) {
+        const entry = entries.find((e) => e.path === item.file)
+        if (!entry) continue
+        try {
+          const id = importExplicit(item.kind, JSON.parse(entryText(entry)), item.name)
+          if (id) ids.push(id)
+        } catch {
+          // 单个文件坏了不影响其他
+        }
+      }
+      if (ids.length > 0) return ids
+    }
 
     const cardEntry = entries.find((e) => e.path === 'card.json' || e.path.endsWith('/card.json'))
     if (cardEntry) {

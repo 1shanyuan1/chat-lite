@@ -31,6 +31,16 @@ export const webPlatform: Platform = {
     window.open(url, '_blank', 'noopener,noreferrer')
   },
 
+  async exportBinaryFile(filename: string, bytes: Uint8Array, mime = 'application/zip') {
+    const blob = new Blob([bytes as BlobPart], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    anchor.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  },
+
   async exportTextFile(filename: string, content: string, mime = 'text/markdown;charset=utf-8') {
     const blob = new Blob([content], { type: mime })
     const url = URL.createObjectURL(blob)
