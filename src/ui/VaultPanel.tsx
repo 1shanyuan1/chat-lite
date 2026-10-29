@@ -9,7 +9,7 @@ type Kind = 'setting' | 'preset' | 'prompt'
 
 const KINDS: Array<{ id: Kind; label: string; hint: string }> = [
   { id: 'setting', label: '设定', hint: '角色、世界观、风格都写这里；一个会话可挂多份' },
-  { id: 'preset', label: '预设', hint: '温度、top_p、输出长度' },
+  { id: 'preset', label: '预设', hint: 'top_p、输出长度（温度已不再支持）' },
   { id: 'prompt', label: '提示词', hint: '可复用的系统提示词片段' },
 ]
 
@@ -130,7 +130,7 @@ export default function VaultPanel() {
               <button className="min-w-0 flex-1 text-left" onClick={() => setEditingPreset(item)}>
                 <div className="truncate text-sm text-neutral-800">{item.name}</div>
                 <div className="truncate text-[10px] text-neutral-400">
-                  {[item.temperature !== undefined ? `温度 ${item.temperature}` : '', item.maxTokens ? `长度 ${item.maxTokens}` : '']
+                  {[item.topP !== undefined ? `top_p ${item.topP}` : '', item.maxTokens ? `长度 ${item.maxTokens}` : '']
                     .filter(Boolean)
                     .join(' · ') || '未设置参数'}
                 </div>
@@ -301,10 +301,9 @@ export default function VaultPanel() {
           />
           {(
             [
-              ['温度 temperature', 'temperature'],
-              ['top_p', 'topP'],
+              ['top_p（可选，多数情况不用调）', 'topP'],
               ['最大长度 max_tokens', 'maxTokens'],
-            ] as Array<[string, 'temperature' | 'topP' | 'maxTokens']>
+            ] as Array<[string, 'topP' | 'maxTokens']>
           ).map(([label, key]) => (
             <div key={key} className="mb-3">
               <label className="mb-1 block text-[11px] text-neutral-500">{label}</label>

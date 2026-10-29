@@ -351,7 +351,8 @@ ok(detectKind({ spec: 'chara_card_v2', data: { name: 'A', first_mes: 'hi' } }) =
 ok(detectKind({ name: 'A', description: 'desc' }) === 'character', '识别角色卡（扁平）')
 ok(detectKind({ entries: { 0: { keys: ['a'], content: 'b' } } }) === 'world', '识别世界书（entries 对象）')
 ok(detectKind([{ keys: ['a'], content: 'b' }]) === 'world', '识别世界书（条目数组）')
-ok(detectKind({ temperature: 0.8, max_tokens: 300 }) === 'preset', '识别生成预设')
+ok(detectKind({ temperature: 0.8, max_tokens: 300 }) === 'preset', '识别生成预设（温度仍可作识别线索）')
+ok(detectKind({ top_p: 0.9, max_tokens: 300 }) === 'preset', '只靠 top_p/长度也能识别预设')
 ok(detectKind({ max_response_length: 256 }) === 'preset', '识别用旧字段名的预设')
 ok(detectKind({ prompt: '你是助手' }) === 'prompt', '识别提示词对象')
 ok(detectKind('你是一个严谨的编辑') === 'prompt', '纯文本识别为提示词')
@@ -368,8 +369,8 @@ ok(stWorld.entries[1].enabled === false, 'disable 字段映射成未启用')
 ok(stWorld.entries[1].keys[0] === '猫', '单数 key 也能解析')
 
 const stPreset = toPresetItem({ name: 'Marinara', temperature: '0.85', top_p: 0.9, max_tokens: 600 }, 'x')
-ok(stPreset.temperature === 0.85, '预设温度从字符串转数字')
 ok(stPreset.topP === 0.9 && stPreset.maxTokens === 600, '预设的 top_p 与长度被读取')
+ok(!('temperature' in stPreset), '预设不再保存温度（即使文件里有）')
 ok(toPresetItem({}, '备用名').name === '备用名', '预设无名时用文件名')
 
 ok(toPromptItem({ name: '编辑器', prompt: '不要用形容词' }, 'x').text === '不要用形容词', '提示词取 prompt 字段')
@@ -434,18 +435,19 @@ st().saveConfig({
   systemPrompt: '',
   protocol: 'openai',
   userName: '旅人',
-  temperature: 1.2,
+  topP: 0.95,
+  maxTokens: 999,
 })
 
-ok(presetOverrides(undefined).temperature === undefined, '没有预设时不覆盖任何字段')
-ok(presetOverrides({ id: 'p', name: 'x', temperature: 0.3, topP: 0.8, createdAt: 0, updatedAt: 0 }).topP === 0.8, '预设覆盖 top_p')
+ok(presetOverrides(undefined).topP === undefined, '没有预设时不覆盖任何字段')
+ok(presetOverrides({ id: 'p', name: 'x', topP: 0.8, createdAt: 0, updatedAt: 0 }).topP === 0.8, '预设覆盖 top_p')
 
 const doc = emptySetting()
 doc.name = '林深'
 doc.body = '深夜电台主播，今晚的听众只有{{user}}一个人'
 doc.entries = [{ id: 'e', keys: ['节目'], content: '节目叫《夜航》', enabled: true }]
 
-const preset = { id: 'preset-1', name: '严谨', temperature: 0.25, maxTokens: 123, createdAt: 0, updatedAt: 0 }
+const preset = { id: 'preset-1', name: '严谨', topP: 0.7, maxTokens: 123, createdAt: 0, updatedAt: 0 }
 st().importSetting(doc)
 st().savePreset(preset)
 
@@ -457,7 +459,8 @@ ok(created.presetId === preset.id, '会话记录了预设')
 await st().send('节目叫什么')
 const body = captured
 ok(Boolean(body), '捕获到请求体')
-ok(body.temperature === 0.25, `会话预设覆盖了全局温度（${body.temperature}）`)
+ok(body.temperature === undefined, '请求里不再出现 temperature')
+ok(body.top_p === 0.7, `会话预设覆盖了全局 top_p（${body.top_p}）`)
 ok(body.max_tokens === 123, `预设的长度进了请求（${body.max_tokens}）`)
 const sys = body.messages[0].role === 'system' ? body.messages[0].content : ''
 ok(sys.includes('林深') && sys.includes('深夜电台主播'), '设定正文进了 system prompt')
@@ -465,10 +468,10 @@ ok(sys.includes('节目叫《夜航》'), '关键词条目命中后进了 system
 ok(sys.includes('旅人') && !sys.includes('{{user}}'), '设定里的 {{user}} 被替换成用户名')
 ok(body.messages.some((m) => m.content === '节目叫什么'), '用户消息在')
 
-// 换个不挂预设的会话，应回落到全局温度
+// 换个不挂预设的会话，应回落到全局参数
 await st().startWithSettings([doc.id])
 await st().send('再说一次')
-ok(captured.temperature === 1.2, `没有预设时回落到全局温度（${captured.temperature}）`)
+ok(captured.top_p === 0.95 && captured.max_tokens === 999, `没有预设时回落到全局参数（top_p ${captured.top_p} / ${captured.max_tokens}）`)
 
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))

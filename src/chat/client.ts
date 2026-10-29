@@ -17,7 +17,6 @@ export interface ChatConfig {
   /** 用户在该角色眼中的称呼，用于替换 {{user}} */
   userName?: string
   /** 采样参数，可由寄存区的预设覆盖 */
-  temperature?: number
   topP?: number
   maxTokens?: number
 }
@@ -42,7 +41,6 @@ export async function* streamChat(
           model: config.model,
           messages: history,
           system: config.systemPrompt || undefined,
-          temperature: config.temperature,
           topP: config.topP,
           maxTokens: config.maxTokens,
           stream: true,

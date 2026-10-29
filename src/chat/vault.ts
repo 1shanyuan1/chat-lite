@@ -21,7 +21,7 @@ export interface WorldItem {
 export interface PresetItem {
   id: string
   name: string
-  temperature?: number
+  /** 温度已不再支持：多数服务商不推荐调整，避免误导 */
   topP?: number
   maxTokens?: number
   createdAt: number
@@ -41,14 +41,9 @@ export interface PromptItem {
 export type VaultEntry = WorldItem | PresetItem | PromptItem
 
 /** 预设只覆盖它声明过的字段，没写的留空（由调用方决定是否回退到全局） */
-export function presetOverrides(preset?: PresetItem | null): {
-  temperature?: number
-  topP?: number
-  maxTokens?: number
-} {
+export function presetOverrides(preset?: PresetItem | null): { topP?: number; maxTokens?: number } {
   if (!preset) return {}
-  const out: { temperature?: number; topP?: number; maxTokens?: number } = {}
-  if (preset.temperature !== undefined) out.temperature = preset.temperature
+  const out: { topP?: number; maxTokens?: number } = {}
   if (preset.topP !== undefined) out.topP = preset.topP
   if (preset.maxTokens !== undefined) out.maxTokens = preset.maxTokens
   return out
@@ -91,8 +86,13 @@ export function detectKind(payload: unknown): 'character' | VaultKind | null {
   }
   if (looksLikeEntries(book)) return 'world'
 
-  // 生成预设
-  if (num(d.temperature) !== undefined || num(d.max_tokens) !== undefined || num(d.max_response_length) !== undefined) {
+  // 生成预设。温度我们不再下发，但社区文件里普遍有它，仍可作为识别线索
+  if (
+    num(d.temperature) !== undefined ||
+    num(d.top_p) !== undefined ||
+    num(d.max_tokens) !== undefined ||
+    num(d.max_response_length) !== undefined
+  ) {
     return 'preset'
   }
 
@@ -144,7 +144,6 @@ export function toPresetItem(payload: unknown, fallbackName: string): PresetItem
   return {
     id: crypto.randomUUID(),
     name: typeof d.name === 'string' && d.name ? d.name : fallbackName,
-    temperature: num(d.temperature),
     topP: num(d.top_p),
     maxTokens: num(d.max_tokens) ?? num(d.max_response_length) ?? num(d.openai_max_tokens),
     createdAt: Date.now(),

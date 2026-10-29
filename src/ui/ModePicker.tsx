@@ -94,7 +94,7 @@ export default function ModePicker() {
                     onClick={() => setPresetId(p.id)}
                   >
                     {p.name}
-                    {p.temperature !== undefined && <span className="ml-1 opacity-60">{p.temperature}</span>}
+                    {p.maxTokens !== undefined && <span className="ml-1 opacity-60">{p.maxTokens}</span>}
                   </button>
                 ))}
               </div>
