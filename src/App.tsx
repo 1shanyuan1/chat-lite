@@ -404,6 +404,16 @@ function SettingsSheet() {
           }}
         />
 
+        <label className="mb-1 block text-xs text-neutral-500">
+          你在角色眼中的称呼（用于替换 {'{{user}}'}）
+        </label>
+        <input
+          className={`${field} mb-3`}
+          placeholder="例如：旅人"
+          value={draft.userName ?? ''}
+          onChange={(e) => setDraft({ ...draft, userName: e.target.value })}
+        />
+
         <label className="mb-1 block text-xs text-neutral-500">系统提示词（可选）</label>
         <textarea
           className={`${field} mb-4 h-20 resize-none`}
@@ -537,9 +547,11 @@ export default function App() {
     browse,
     setBrowseIndex,
     exitBrowse,
+    characters,
   } = useApp()
   const bottomRef = useRef<HTMLDivElement>(null)
   const provider = findProvider(config.baseUrl)
+  const character = characters.find((c) => c.id === sessions.find((s) => s.id === currentId)?.characterId)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [statsOpen, setStatsOpen] = useState(false)
@@ -664,8 +676,10 @@ export default function App() {
           <MenuIcon />
         </button>
         <div className="min-w-0 px-2 text-center">
-          <div className="truncate text-sm font-medium">{provider?.label ?? 'Chat Lite'}</div>
-          <div className="truncate text-[10px] text-neutral-400">{config.model || '未选模型'}</div>
+          <div className="truncate text-sm font-medium">{character?.name ?? provider?.label ?? 'Chat Lite'}</div>
+          <div className="truncate text-[10px] text-neutral-400">
+            {character ? `角色对话 · ${config.model || '未选模型'}` : config.model || '未选模型'}
+          </div>
         </div>
         <button
           className="rounded-lg p-1.5 text-neutral-600 active:bg-neutral-100"
@@ -717,6 +731,7 @@ export default function App() {
                 </div>
               ) : (
                 <>
+                  {variant.user.content.trim() && (
                   <div className="flex justify-end">
                     <div
                       id={hitElementId({ turnId: turn.id, field: 'user' })}
@@ -727,6 +742,8 @@ export default function App() {
                       {variant.user.content}
                     </div>
                   </div>
+                  )}
+                  {variant.user.content.trim() && (
                   <div className="mt-1 flex items-center justify-end gap-3">
                     <VariantSwitcher turn={turn} onSwitch={(i) => void switchVariant(turn.id, i)} />
                     <button
@@ -744,6 +761,7 @@ export default function App() {
                       </button>
                     )}
                   </div>
+                  )}
                 </>
               )}
 

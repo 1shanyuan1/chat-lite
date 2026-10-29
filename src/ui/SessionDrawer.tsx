@@ -7,6 +7,7 @@ import { formatPercent, formatTokens, hitRate, isCacheEstimated, missTokens, sum
 import { activeVariant, type ChatTurn, type SearchHit, type Session } from '@/db'
 import { getRepo } from '@/db/runtime'
 import { platform } from '@/platform'
+import CharacterList from './CharacterList'
 import { CloseIcon, DownloadIcon, PlusIcon, SearchIcon } from './icons'
 
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -103,6 +104,7 @@ export default function SessionDrawer() {
   const [query, setQuery] = useState('')
   const [contentHits, setContentHits] = useState<SearchHit[]>([])
   const [searching, setSearching] = useState(false)
+  const [tab, setTab] = useState<'chats' | 'chars'>('chats')
 
   const q = query.trim().toLowerCase()
 
@@ -159,16 +161,40 @@ export default function SessionDrawer() {
     <div className="absolute inset-0 z-30 flex">
       <div className="absolute inset-0 bg-black/25" onClick={() => setDrawer(false)} />
       <aside className="relative flex h-full w-[82%] max-w-[340px] flex-col bg-white shadow-xl">
-        <div className="flex items-center justify-between px-4 pt-[max(12px,env(safe-area-inset-top))] pb-2">
-          <span className="text-sm font-medium">会话</span>
-          <button
-            className="flex items-center gap-1 rounded-lg bg-neutral-900 px-2.5 py-1.5 text-xs text-white"
-            onClick={newSession}
-          >
-            <PlusIcon />
-            新对话
-          </button>
+        <div className="flex items-center justify-between px-4 pt-[max(12px,env(safe-area-inset-top))] pb-1">
+          <div className="flex gap-1">
+            {(
+              [
+                ['chats', '会话'],
+                ['chars', '角色'],
+              ] as Array<['chats' | 'chars', string]>
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                className={`rounded-lg px-2 py-1 text-sm ${
+                  tab === key ? 'bg-neutral-100 font-medium text-neutral-900' : 'text-neutral-400'
+                }`}
+                onClick={() => setTab(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {tab === 'chats' && (
+            <button
+              className="flex items-center gap-1 rounded-lg bg-neutral-900 px-2.5 py-1.5 text-xs text-white"
+              onClick={newSession}
+            >
+              <PlusIcon />
+              新对话
+            </button>
+          )}
         </div>
+
+        {tab === 'chars' && <CharacterList />}
+
+        {tab === 'chats' && (
+          <>
 
         <div className="px-3 pb-2">
           <div className="flex items-center gap-2 rounded-lg bg-neutral-100 px-2.5 py-1.5">
@@ -268,6 +294,8 @@ export default function SessionDrawer() {
             导出当前会话
           </button>
         </div>
+          </>
+        )}
       </aside>
     </div>
   )

@@ -33,6 +33,8 @@ const {
 } = await import('@/chat/tokens')
 const { sessionToMarkdown, exportFilename } = await import('@/chat/export')
 const { BUILTIN_PACKS, DEFAULT_PACK_ID, findPack, renderTemplate, composeSystemPrompt } = await import('@/chat/packs')
+const { normalizeCard, applyMacros, renderCard, extractCardFromPng } = await import('@/chat/characters')
+const { matchWorldEntries, renderWorldEntries, contextWindow } = await import('@/chat/lore')
 
 let passed = 0
 let failed = 0
@@ -253,6 +255,85 @@ ok(composeSystemPrompt('包规范') === '包规范', '只有包提示词时不�
 ok(composeSystemPrompt('', '摘要', '') === '摘要', '空段被跳过')
 ok(composeSystemPrompt('', '', '') === '', '全空得到空串')
 ok(composeSystemPrompt('包', '   ', '用户') === '包\n\n用户', '纯空白段被跳过')
+
+/* ---------------- 角色卡 ---------------- */
+section('角色卡')
+
+const v2 = normalizeCard({
+  spec: 'chara_card_v2',
+  spec_version: '2.0',
+  data: {
+    name: '林深',
+    description: '{{char}} 是一名夜间电台主播，说话很慢。',
+    personality: '温和、话少',
+    scenario: '凌晨两点的直播间',
+    first_mes: '「喂，{{user}}，今晚想听什么？」',
+    mes_example: '<START>\n{{user}}: 随便\n{{char}}: 那就放首慢的。',
+    system_prompt: '保持电台主播的语气。',
+    character_book: {
+      entries: [
+        { keys: ['电台', '节目'], content: '节目名叫《夜航》，每周三停播。', enabled: true },
+        { keys: ['猫'], content: '他养了一只叫豆子的猫。' },
+        { keys: ['隐藏'], content: '不该出现', enabled: false },
+      ],
+    },
+  },
+})
+
+ok(v2.name === '林深', 'V2 卡解析出名字')
+ok(v2.firstMessage.includes('{{user}}'), '开场白保留原始宏（渲染时才替换）')
+ok(v2.systemPrompt === '保持电台主播的语气。', 'V2 system_prompt 被读取')
+ok(v2.worldInfo.length === 3, `世界书解析出 ${v2.worldInfo.length} 条`)
+ok(v2.worldInfo[0].keys.join('/') === '电台/节目', '世界书关键词解析正确')
+
+const v1 = normalizeCard({ name: '阿岚', first_mes: '「来了？」', description: '一个旅人' })
+ok(v1.name === '阿岚' && v1.firstMessage === '「来了？」', '旧版扁平结构也能解析')
+ok(normalizeCard({}).name === '未命名角色', '空对象回退到默认名')
+ok(normalizeCard({ data: null }).name === '未命名角色', '结构异常不抛错')
+
+ok(applyMacros('{{char}}对{{user}}说：<USER>你好', '林深', '旅人') === '林深对旅人说：旅人你好', '宏替换（含大小写变体）')
+ok(applyMacros('', 'A', 'B') === '', '空文本不炸')
+
+const rendered = renderCard(v2, '旅人')
+ok(rendered.includes('林深') && rendered.includes('夜间电台主播'), '角色卡渲染包含名字与设定')
+ok(rendered.includes('温和、话少') && rendered.includes('凌晨两点'), '性格与情境都进提示词')
+ok(rendered.includes('不要跳出角色'), '角色卡强制限定口吻')
+ok(!renderCard(normalizeCard({ name: '空' }), '你').includes('性格：'), '空字段不生成空标题')
+
+// 世界书
+const entries = v2.worldInfo
+ok(matchWorldEntries(entries, '今天电台放什么').length === 1, '关键词命中注入')
+ok(matchWorldEntries(entries, '今天天气不错').length === 0, '未命中不注入')
+ok(matchWorldEntries(entries, '不该出现的词').every((e) => !e.content.includes('不该出现')), '禁用条目不注入')
+ok(matchWorldEntries([{ id: 'c', keys: [], content: '常驻设定', enabled: true, constant: true }], '随便').length === 1, '常驻条目无条件注入')
+ok(matchWorldEntries(entries, '电台 猫 节目 隐藏', 1).length === 1, '命中数量有上限')
+ok(renderWorldEntries([{ id: 'x', keys: ['a'], content: '设定内容', enabled: true }]).includes('设定内容'), '世界书渲染成文本')
+ok(contextWindow(['1', '2', '3', '4', '5'], 3) === '3\n4\n5', '扫描窗口只取最近几条')
+
+// PNG 内嵌卡（SillyTavern 主流格式）
+function chunk(type, data) {
+  const len = Buffer.alloc(4)
+  len.writeUInt32BE(data.length)
+  return Buffer.concat([len, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)])
+}
+const cardJson = { spec: 'chara_card_v2', data: { name: '铁匠', description: '镇上的铁匠', first_mes: '「要打点什么？」' } }
+const b64 = Buffer.from(JSON.stringify(cardJson)).toString('base64')
+const png = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  chunk('IHDR', Buffer.alloc(13)),
+  chunk('tEXt', Buffer.concat([Buffer.from('chara', 'latin1'), Buffer.from([0]), Buffer.from(b64, 'latin1')])),
+  chunk('IEND', Buffer.alloc(0)),
+])
+const pngBuffer = png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength)
+const fromPng = normalizeCard(extractCardFromPng(pngBuffer))
+ok(fromPng.name === '铁匠' && fromPng.firstMessage === '「要打点什么？」', '从 PNG 的 tEXt 块读出角色卡')
+
+const noCardPng = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  chunk('IEND', Buffer.alloc(0)),
+])
+ok(extractCardFromPng(noCardPng.buffer.slice(noCardPng.byteOffset, noCardPng.byteOffset + noCardPng.byteLength)) === null, '没有 chara 块的 PNG 返回 null')
+ok(extractCardFromPng(new Uint8Array([1, 2, 3]).buffer) === null, '非 PNG 文件返回 null')
 
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))

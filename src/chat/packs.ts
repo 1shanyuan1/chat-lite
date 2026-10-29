@@ -67,12 +67,8 @@ export function findPack(id?: string | null): PromptPack {
  * 三段提示词按优先级拼接：提示词包（写作/角色规范）→ 会话级（压缩摘要）→ 用户设置。
  * 抽出成纯函数，方便测试与复用。
  */
-export function composeSystemPrompt(
-  packSystem: string,
-  sessionSystem?: string | null,
-  userSystem?: string | null
-): string {
-  return [packSystem, sessionSystem, userSystem].filter((part) => part && part.trim()).join('\n\n')
+export function composeSystemPrompt(...parts: Array<string | null | undefined>): string {
+  return parts.filter((part) => part && part.trim()).join('\n\n')
 }
 
 /**

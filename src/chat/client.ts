@@ -14,6 +14,8 @@ export interface ChatConfig {
   contextLimit?: number
   /** 全局提示词包（会话可覆盖） */
   packId?: string
+  /** 用户在该角色眼中的称呼，用于替换 {{user}} */
+  userName?: string
 }
 
 export interface WireTurn {

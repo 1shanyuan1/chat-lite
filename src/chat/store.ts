@@ -9,7 +9,10 @@ import {
 import { getRepo } from '@/db/runtime'
 import { completeText, streamChat, type ChatConfig, type WireTurn } from './client'
 import { humanizeError } from './errors'
+import { applyMacros, renderCard, type CharacterCard } from './characters'
+import { listCharacters, saveCharacter, deleteCharacter as removeCharacter } from '@/db/characters'
 import { findTurnHits } from './hit-nav'
+import { contextWindow, matchWorldEntries, renderWorldEntries } from './lore'
 import { composeSystemPrompt, DEFAULT_PACK_ID, findPack, renderTemplate } from './packs'
 import { PROVIDERS } from './providers'
 import {
@@ -32,6 +35,7 @@ const defaultConfig: ChatConfig = {
   systemPrompt: '',
   protocol: PROVIDERS[0].protocol,
   packId: DEFAULT_PACK_ID,
+  userName: '你',
 }
 
 function loadConfig(): ChatConfig {
@@ -59,7 +63,7 @@ function wireHistory(turns: ChatTurn[], uptoIdx: number): WireTurn[] {
   for (const turn of turns) {
     if (turn.idx > uptoIdx) break
     const variant = activeVariant(turn)
-    out.push({ role: 'user', content: variant.user.content })
+    if (variant.user.content.trim()) out.push({ role: 'user', content: variant.user.content })
     if (variant.assistant?.content) out.push({ role: 'assistant', content: variant.assistant.content })
   }
   return out
@@ -78,6 +82,11 @@ interface AppState {
   draft: string
   /** 搜索命中浏览状态：当前会话里正在看第几条命中 */
   browse: { query: string; index: number } | null
+  characters: CharacterCard[]
+
+  importCharacter: (card: CharacterCard) => void
+  removeCharacter: (id: string) => void
+  startWithCharacter: (characterId: string) => Promise<void>
 
   init: () => Promise<void>
   saveConfig: (patch: Partial<ChatConfig>) => void
@@ -127,12 +136,29 @@ export const useApp = create<AppState>()((set, get) => {
     controller = new AbortController()
     lastPersist = 0
 
-    // 三段提示词叠起来：提示词包（写作/角色规范）→ 会话级（压缩摘要）→ 全局设置
+    // 提示词分层：包规范 → 角色卡 → 命中的世界书 → 会话摘要 → 用户设置
     const session = get().sessions.find((s) => s.id === sessionId)
     const pack = findPack(session?.packId ?? get().config.packId)
+    const userName = get().config.userName ?? '你'
+    const card = session?.characterId ? get().characters.find((c) => c.id === session.characterId) : undefined
+
+    let characterBlock = ''
+    let worldBlock = ''
+    if (card) {
+      characterBlock = renderCard(card, userName)
+      const recent = contextWindow(history.map((m) => m.content))
+      worldBlock = renderWorldEntries(matchWorldEntries(card.worldInfo, recent))
+    }
+
     const effectiveConfig: ChatConfig = {
       ...get().config,
-      systemPrompt: composeSystemPrompt(pack.systemPrompt, session?.systemPrompt, get().config.systemPrompt),
+      systemPrompt: composeSystemPrompt(
+        pack.systemPrompt,
+        characterBlock,
+        worldBlock,
+        session?.systemPrompt,
+        get().config.systemPrompt
+      ),
     }
 
     let answer = ''
@@ -211,8 +237,10 @@ export const useApp = create<AppState>()((set, get) => {
     settingsOpen: false,
     draft: '',
     browse: null,
+    characters: [],
 
     async init() {
+      set({ characters: listCharacters() })
       const sessions = await getRepo().listSessions()
       const current = sessions[0] ?? null
       set({
@@ -237,6 +265,48 @@ export const useApp = create<AppState>()((set, get) => {
 
     setDrawer: (open) => set({ drawerOpen: open }),
     setSettings: (open) => set({ settingsOpen: open }),
+
+    importCharacter(card) {
+      set({ characters: saveCharacter(card) })
+    },
+
+    removeCharacter(id) {
+      set({ characters: removeCharacter(id) })
+    },
+
+    /** 用角色开新会话：建会话 → 插入开场白 → 切过去 */
+    async startWithCharacter(characterId) {
+      const card = get().characters.find((c) => c.id === characterId)
+      if (!card) return
+      const session = await getRepo().createSession(card.name, undefined, 'roleplay', card.id)
+
+      const greeting = card.firstMessage.trim()
+      if (greeting) {
+        await getRepo().appendTurn({
+          id: newId(),
+          sessionId: session.id,
+          idx: 0,
+          active: 0,
+          createdAt: Date.now(),
+          variants: [
+            {
+              user: { content: '' },
+              assistant: { content: applyMacros(greeting, card.name, get().config.userName ?? '你') },
+            },
+          ],
+        })
+      }
+
+      set({
+        sessions: await getRepo().listSessions(),
+        currentId: session.id,
+        turns: await getRepo().listTurns(session.id),
+        drawerOpen: false,
+        error: null,
+        draft: '',
+        browse: null,
+      })
+    },
 
     /** 切换提示词包：写回全局默认，同时绑定到当前会话 */
     async setPack(packId) {
