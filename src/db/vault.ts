@@ -1,4 +1,4 @@
-import type { PresetItem, PromptItem, VaultKind, WorldItem } from '@/chat/vault'
+import type { PresetItem, PromptItem, VaultKind } from '@/chat/vault'
 
 const key = (kind: VaultKind) => `cl.vault.${kind}`
 
@@ -16,7 +16,6 @@ function write<T>(kind: VaultKind, list: T[]) {
   localStorage.setItem(key(kind), JSON.stringify(list))
 }
 
-export const listWorlds = () => read<WorldItem>('world').sort((a, b) => b.updatedAt - a.updatedAt)
 export const listPresets = () => read<PresetItem>('preset').sort((a, b) => b.updatedAt - a.updatedAt)
 export const listPrompts = () => read<PromptItem>('prompt').sort((a, b) => b.updatedAt - a.updatedAt)
 
@@ -26,7 +25,6 @@ function upsert<T extends { id: string; updatedAt: number }>(kind: VaultKind, it
   return next.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
-export const saveWorld = (item: WorldItem) => upsert('world', item)
 export const savePreset = (item: PresetItem) => upsert('preset', item)
 export const savePrompt = (item: PromptItem) => upsert('prompt', item)
 
@@ -36,6 +34,5 @@ function remove<T extends { id: string }>(kind: VaultKind, id: string): T[] {
   return next
 }
 
-export const deleteWorld = (id: string) => remove<WorldItem>('world', id)
 export const deletePreset = (id: string) => remove<PresetItem>('preset', id)
 export const deletePrompt = (id: string) => remove<PromptItem>('prompt', id)

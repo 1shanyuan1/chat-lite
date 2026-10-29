@@ -36,6 +36,7 @@ const { BUILTIN_PACKS, DEFAULT_PACK_ID, findPack, renderTemplate, composeSystemP
 const { normalizeCard, applyMacros, renderCard, extractCardFromPng } = await import('@/chat/characters')
 const { matchWorldEntries, renderWorldEntries, contextWindow } = await import('@/chat/lore')
 const { detectKind, toWorldItem, toPresetItem, toPromptItem, VAULT_KINDS } = await import('@/chat/vault')
+const { settingFromCard, settingFromWorld, settingFromText, renderSettings, collectEntries, pickGreeting } = await import('@/chat/settings')
 
 let passed = 0
 let failed = 0
@@ -231,22 +232,19 @@ ok((await repo.search('公园')).length === 0, '被删会话不再出现在搜�
 /* ---------------- 提示词包 ---------------- */
 section('提示词包')
 
-ok(BUILTIN_PACKS.length === 3, `内置三套包（${BUILTIN_PACKS.length}）`)
-ok(new Set(BUILTIN_PACKS.map((p) => p.id)).size === 3, '包 id 不重复')
+ok(BUILTIN_PACKS.length === 2, `极简与设定两种模式（${BUILTIN_PACKS.length}）`)
+ok(new Set(BUILTIN_PACKS.map((p) => p.id)).size === 2, '模式 id 不重复')
 ok(BUILTIN_PACKS.every((p) => p.name && p.hint), '每套包都有名称与说明')
 ok(findPack(DEFAULT_PACK_ID).id === 'minimal', '默认落到极简包')
-ok(findPack('writing').name === '写作', '按 id 取包')
+ok(findPack('settings').name === '设定', '按 id 取模式')
 ok(findPack('不存在').id === 'minimal', '未知 id 回退到极简')
 ok(findPack(undefined).id === 'minimal', '未设置时回退到极简')
 
-const writing = findPack('writing')
-ok(writing.systemPrompt.length > 20, '写作包带系统提示词')
-ok(writing.actions.length >= 4, `写作包 ${writing.actions.length} 个快捷动作`)
-ok(writing.actions.every((a) => a.id && a.label && a.template.includes('{{input}}')), '每个动作都有 id/标签且含 {{input}} 占位')
-ok(findPack('minimal').actions.length === 0, '极简包没有动作，不占界面')
-ok(findPack('roleplay').actions.length === 0, '角色包不带按钮（扮演不需要操作面板）')
-ok(findPack('roleplay').systemPrompt.length > 10, '角色包仍保留姿态说明')
-ok(findPack('writing').actions.length > 0, '写作包保留动作（写作确实需要）')
+const settingsPack = findPack('settings')
+ok(settingsPack.systemPrompt.length > 20, '设定模式带姿态说明')
+ok(settingsPack.actions.length === 0, '设定模式不带按钮')
+ok(findPack('minimal').actions.length === 0, '极简模式没有动作，不占界面')
+ok(settingsPack.systemPrompt.includes('设定文件'), '设定模式明确要求遵循设定文件')
 
 ok(renderTemplate('润色这段：\n{{input}}', '原文') === '润色这段：\n原文', '占位符被输入替换')
 ok(renderTemplate('{{input}} 和 {{input}}', 'A') === 'A 和 A', '多处占位符全部替换')
@@ -372,6 +370,34 @@ ok(toPresetItem({}, '备用名').name === '备用名', '预设无名时用文件
 ok(toPromptItem({ name: '编辑器', prompt: '不要用形容词' }, 'x').text === '不要用形容词', '提示词取 prompt 字段')
 ok(toPromptItem('直接是文本', 'x').text === '直接是文本', '纯文本提示词')
 ok(toPromptItem({ system_prompt: '系统' }, 'x').text === '系统', 'system_prompt 字段也能取')
+
+/* ---------------- 设定文件 ---------------- */
+section('设定文件（角色卡 + 世界书合一）')
+
+const fromCard = settingFromCard(v2)
+ok(fromCard.name === '林深', '卡转设定保留名字')
+ok(fromCard.body.includes('夜间电台主播'), '设定正文包含原 description')
+ok(fromCard.body.includes('性格：温和'), '性格并进正文且带标题')
+ok(fromCard.body.includes('情境：凌晨两点'), '情境并进正文')
+ok(fromCard.entries.length === 3, `卡内世界书转成 ${fromCard.entries.length} 条条目`)
+ok(fromCard.firstMessage?.includes('{{user}}'), '开场白原样保留（渲染时才替换）')
+
+const fromWorld = settingFromWorld({ name: '夜航世界观', entries: fromCard.entries })
+ok(fromWorld.name === '夜航世界观' && fromWorld.entries.length === 3, '世界书可直接转设定')
+ok(fromWorld.body === '', '转过来时正文为空，等用户补')
+
+const fromText = settingFromText('写作风格', '不要形容词')
+ok(fromText.body === '不要形容词' && fromText.entries.length === 0, '纯文本转设定')
+
+const two = [fromCard, fromWorld]
+ok(renderSettings(two, '旅人').includes('## 林深'), '多份设定各自成节')
+ok(renderSettings(two, '旅人').includes('夜间电台主播'), '第一份内容在')
+ok(renderSettings([fromText], '你') === '## 写作风格\n不要形容词', '单份设定的渲染格式')
+ok(renderSettings([], '你') === '', '没挂设定时返回空串')
+ok(collectEntries(two).length === 6, `合并多份设定的条目（${collectEntries(two).length}）`)
+
+ok(pickGreeting([fromWorld, fromCard], '旅人')?.text.includes('旅人'), '多份里挑带开场白的那份并替换宏')
+ok(pickGreeting([fromWorld], '旅人') === null, '都没有开场白时返回 null')
 
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))

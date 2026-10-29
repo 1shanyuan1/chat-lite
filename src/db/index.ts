@@ -10,8 +10,10 @@ export interface Session {
   systemPrompt?: string
   /** 绑定的提示词包，缺省时用全局设置 */
   packId?: string
-  /** 绑定的角色卡（酒馆模式） */
+  /** 绑定的角色卡（旧字段，仅用于迁移读取） */
   characterId?: string
+  /** 挂载的设定文件，可多个 */
+  settingIds?: string[]
 }
 
 export interface TurnUser {
@@ -53,7 +55,12 @@ export interface SearchHit {
 
 export interface Repo {
   listSessions(): Promise<Session[]>
-  createSession(title: string, systemPrompt?: string, packId?: string, characterId?: string): Promise<Session>
+  createSession(
+    title: string,
+    systemPrompt?: string,
+    packId?: string,
+    settingIds?: string[]
+  ): Promise<Session>
   renameSession(id: string, title: string): Promise<void>
   setSessionPack(id: string, packId: string): Promise<void>
   deleteSession(id: string): Promise<void>
@@ -66,6 +73,17 @@ export interface Repo {
 }
 
 export const newId = (): string => crypto.randomUUID()
+
+/** setting_ids 存成 JSON 文本，兼容空值 */
+export function parseIds(raw: unknown): string[] {
+  if (raw == null) return []
+  try {
+    const list = JSON.parse(String(raw)) as unknown
+    return Array.isArray(list) ? list.map(String) : []
+  } catch {
+    return []
+  }
+}
 
 export const activeVariant = (turn: ChatTurn): TurnVariant => turn.variants[turn.active] ?? turn.variants[0]
 
@@ -108,8 +126,8 @@ export function createLocalRepo(): Repo {
     async listSessions() {
       return readJson<Session[]>(SESSIONS, []).sort((a, b) => b.updatedAt - a.updatedAt)
     },
-    async createSession(title, systemPrompt, packId, characterId) {
-      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, characterId }
+    async createSession(title, systemPrompt, packId, settingIds) {
+      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, settingIds }
       writeJson(SESSIONS, [session, ...readJson<Session[]>(SESSIONS, [])])
       return session
     },
@@ -195,7 +213,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at INTEGER NOT NULL,
   system_prompt TEXT,
   pack_id TEXT,
-  character_id TEXT
+  character_id TEXT,
+  setting_ids TEXT
 );
 CREATE TABLE IF NOT EXISTS turns (
   id TEXT PRIMARY KEY NOT NULL,
@@ -222,6 +241,7 @@ export async function createSqliteRepo(): Promise<Repo> {
   await db.execute("ALTER TABLE turns ADD COLUMN assistant_text TEXT NOT NULL DEFAULT ''").catch(() => undefined)
   await db.execute('ALTER TABLE sessions ADD COLUMN pack_id TEXT').catch(() => undefined)
   await db.execute('ALTER TABLE sessions ADD COLUMN character_id TEXT').catch(() => undefined)
+  await db.execute('ALTER TABLE sessions ADD COLUMN setting_ids TEXT').catch(() => undefined)
 
   const rowToTurn = (row: Record<string, unknown>): ChatTurn => ({
     id: String(row.id),
@@ -235,7 +255,7 @@ export async function createSqliteRepo(): Promise<Repo> {
   return {
     async listSessions() {
       const res = await db.query(
-        'SELECT id, title, updated_at, system_prompt, pack_id, character_id FROM sessions ORDER BY updated_at DESC'
+        'SELECT id, title, updated_at, system_prompt, pack_id, character_id, setting_ids FROM sessions ORDER BY updated_at DESC'
       )
       return (res.values ?? []).map((row: Record<string, unknown>) => ({
         id: String(row.id),
@@ -244,19 +264,20 @@ export async function createSqliteRepo(): Promise<Repo> {
         systemPrompt: row.system_prompt == null ? undefined : String(row.system_prompt),
         packId: row.pack_id == null ? undefined : String(row.pack_id),
         characterId: row.character_id == null ? undefined : String(row.character_id),
+        settingIds: parseIds(row.setting_ids),
       }))
     },
-    async createSession(title, systemPrompt, packId, characterId) {
-      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, characterId }
+    async createSession(title, systemPrompt, packId, settingIds) {
+      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, settingIds }
       await db.run(
-        'INSERT INTO sessions (id, title, updated_at, system_prompt, pack_id, character_id) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO sessions (id, title, updated_at, system_prompt, pack_id, setting_ids) VALUES (?, ?, ?, ?, ?, ?)',
         [
           session.id,
           session.title,
           session.updatedAt,
           session.systemPrompt ?? null,
           session.packId ?? null,
-          session.characterId ?? null,
+          settingIds && settingIds.length > 0 ? JSON.stringify(settingIds) : null,
         ]
       )
       return session

@@ -529,11 +529,17 @@ export default function App() {
     browse,
     setBrowseIndex,
     exitBrowse,
-    characters,
+    settings,
   } = useApp()
   const bottomRef = useRef<HTMLDivElement>(null)
   const provider = findProvider(config.baseUrl)
-  const character = characters.find((c) => c.id === sessions.find((s) => s.id === currentId)?.characterId)
+  const session = sessions.find((s) => s.id === currentId)
+  const settingIds = session?.settingIds?.length
+    ? session.settingIds
+    : session?.characterId
+      ? [session.characterId]
+      : []
+  const activeSetting = settings.find((d) => d.id === settingIds[0])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [statsOpen, setStatsOpen] = useState(false)
@@ -658,9 +664,11 @@ export default function App() {
           <MenuIcon />
         </button>
         <div className="min-w-0 px-2 text-center">
-          <div className="truncate text-sm font-medium">{character?.name ?? provider?.label ?? 'Chat Lite'}</div>
+          <div className="truncate text-sm font-medium">
+            {activeSetting?.name ?? (settingIds.length > 1 ? `${settingIds.length} 份设定` : provider?.label) ?? 'Chat Lite'}
+          </div>
           <div className="truncate text-[10px] text-neutral-400">
-            {character ? `角色对话 · ${config.model || '未选模型'}` : config.model || '未选模型'}
+            {settingIds.length > 0 ? `设定对话 · ${config.model || '未选模型'}` : config.model || '未选模型'}
           </div>
         </div>
         <button

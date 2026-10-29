@@ -9,21 +9,11 @@ import {
 import { getRepo } from '@/db/runtime'
 import { completeText, streamChat, type ChatConfig, type WireTurn } from './client'
 import { humanizeError } from './errors'
-import { applyMacros, renderCard, type CharacterCard } from './characters'
-import { listCharacters, saveCharacter, deleteCharacter as removeCharacter } from '@/db/characters'
+import { collectEntries, pickGreeting, renderSettings, type SettingDoc } from './settings'
+import { deleteSetting, migrateLegacySettings, saveSetting } from '@/db/settings'
 import { findTurnHits } from './hit-nav'
-import type { PresetItem, PromptItem, VaultKind, WorldItem } from './vault'
-import {
-  deletePreset,
-  deletePrompt,
-  deleteWorld,
-  listPresets,
-  listPrompts,
-  listWorlds,
-  savePreset,
-  savePrompt,
-  saveWorld,
-} from '@/db/vault'
+import type { PresetItem, PromptItem } from './vault'
+import { deletePreset, deletePrompt, listPresets, listPrompts, savePreset, savePrompt } from '@/db/vault'
 import { contextWindow, matchWorldEntries, renderWorldEntries } from './lore'
 import { composeSystemPrompt, DEFAULT_PACK_ID, findPack, renderTemplate } from './packs'
 import { PROVIDERS } from './providers'
@@ -94,18 +84,19 @@ interface AppState {
   draft: string
   /** 搜索命中浏览状态：当前会话里正在看第几条命中 */
   browse: { query: string; index: number } | null
-  characters: CharacterCard[]
-  worlds: WorldItem[]
+  settings: SettingDoc[]
   presets: PresetItem[]
   prompts: PromptItem[]
 
-  saveVaultItem: (kind: VaultKind, item: WorldItem | PresetItem | PromptItem) => void
-  removeVaultItem: (kind: VaultKind, id: string) => void
+  importSetting: (doc: SettingDoc) => void
+  removeSetting: (id: string) => void
+  startWithSettings: (ids: string[]) => Promise<void>
+  savePreset: (item: PresetItem) => void
+  removePreset: (id: string) => void
+  savePrompt: (item: PromptItem) => void
+  removePrompt: (id: string) => void
   applyPreset: (preset: PresetItem) => void
   applyPrompt: (prompt: PromptItem) => void
-  importCharacter: (card: CharacterCard) => void
-  removeCharacter: (id: string) => void
-  startWithCharacter: (characterId: string) => Promise<void>
 
   init: () => Promise<void>
   saveConfig: (patch: Partial<ChatConfig>) => void
@@ -159,21 +150,24 @@ export const useApp = create<AppState>()((set, get) => {
     const session = get().sessions.find((s) => s.id === sessionId)
     const pack = findPack(session?.packId ?? get().config.packId)
     const userName = get().config.userName ?? '你'
-    const card = session?.characterId ? get().characters.find((c) => c.id === session.characterId) : undefined
+    const ids = session?.settingIds?.length ? session.settingIds : session?.characterId ? [session.characterId] : []
+    const docs = ids
+      .map((id) => get().settings.find((d) => d.id === id))
+      .filter((d): d is SettingDoc => Boolean(d))
 
-    let characterBlock = ''
+    let settingBlock = ''
     let worldBlock = ''
-    if (card) {
-      characterBlock = renderCard(card, userName)
+    if (docs.length > 0) {
+      settingBlock = renderSettings(docs, userName)
       const recent = contextWindow(history.map((m) => m.content))
-      worldBlock = renderWorldEntries(matchWorldEntries(card.worldInfo, recent))
+      worldBlock = renderWorldEntries(matchWorldEntries(collectEntries(docs), recent))
     }
 
     const effectiveConfig: ChatConfig = {
       ...get().config,
       systemPrompt: composeSystemPrompt(
         pack.systemPrompt,
-        characterBlock,
+        settingBlock,
         worldBlock,
         session?.systemPrompt,
         get().config.systemPrompt
@@ -256,15 +250,13 @@ export const useApp = create<AppState>()((set, get) => {
     settingsOpen: false,
     draft: '',
     browse: null,
-    characters: [],
-    worlds: [],
+    settings: [],
     presets: [],
     prompts: [],
 
     async init() {
       set({
-        characters: listCharacters(),
-        worlds: listWorlds(),
+        settings: migrateLegacySettings(),
         presets: listPresets(),
         prompts: listPrompts(),
       })
@@ -293,16 +285,28 @@ export const useApp = create<AppState>()((set, get) => {
     setDrawer: (open) => set({ drawerOpen: open }),
     setSettings: (open) => set({ settingsOpen: open }),
 
-    saveVaultItem(kind, item) {
-      if (kind === 'world') set({ worlds: saveWorld(item as WorldItem) })
-      else if (kind === 'preset') set({ presets: savePreset(item as PresetItem) })
-      else set({ prompts: savePrompt(item as PromptItem) })
+    importSetting(doc) {
+      set({ settings: saveSetting(doc) })
     },
 
-    removeVaultItem(kind, id) {
-      if (kind === 'world') set({ worlds: deleteWorld(id) })
-      else if (kind === 'preset') set({ presets: deletePreset(id) })
-      else set({ prompts: deletePrompt(id) })
+    removeSetting(id) {
+      set({ settings: deleteSetting(id) })
+    },
+
+    savePreset(item) {
+      set({ presets: savePreset(item) })
+    },
+
+    removePreset(id) {
+      set({ presets: deletePreset(id) })
+    },
+
+    savePrompt(item) {
+      set({ prompts: savePrompt(item) })
+    },
+
+    removePrompt(id) {
+      set({ prompts: deletePrompt(id) })
     },
 
     /** 应用预设：只覆盖它声明过的字段，没写的保持原样 */
@@ -318,21 +322,17 @@ export const useApp = create<AppState>()((set, get) => {
       get().saveConfig({ systemPrompt: prompt.text })
     },
 
-    importCharacter(card) {
-      set({ characters: saveCharacter(card) })
-    },
+    /** 用一组设定文件开新会话：建会话 → 插入开场白 → 切过去 */
+    async startWithSettings(ids) {
+      const docs = ids
+        .map((id) => get().settings.find((d) => d.id === id))
+        .filter((d): d is SettingDoc => Boolean(d))
+      if (docs.length === 0) return
 
-    removeCharacter(id) {
-      set({ characters: removeCharacter(id) })
-    },
+      const title = docs.length === 1 ? docs[0].name : docs.map((d) => d.name).join(' · ').slice(0, 20)
+      const session = await getRepo().createSession(title, undefined, 'settings', docs.map((d) => d.id))
 
-    /** 用角色开新会话：建会话 → 插入开场白 → 切过去 */
-    async startWithCharacter(characterId) {
-      const card = get().characters.find((c) => c.id === characterId)
-      if (!card) return
-      const session = await getRepo().createSession(card.name, undefined, 'roleplay', card.id)
-
-      const greeting = card.firstMessage.trim()
+      const greeting = pickGreeting(docs, get().config.userName ?? '你')
       if (greeting) {
         await getRepo().appendTurn({
           id: newId(),
@@ -340,12 +340,7 @@ export const useApp = create<AppState>()((set, get) => {
           idx: 0,
           active: 0,
           createdAt: Date.now(),
-          variants: [
-            {
-              user: { content: '' },
-              assistant: { content: applyMacros(greeting, card.name, get().config.userName ?? '你') },
-            },
-          ],
+          variants: [{ user: { content: '' }, assistant: { content: greeting.text } }],
         })
       }
 
