@@ -12,7 +12,8 @@ export default function ModePicker() {
   const [starting, setStarting] = useState(false)
 
   const pack = findPack(config.packId)
-  const isSettings = pack.id === 'settings'
+  const isMinimal = pack.id === 'minimal'
+  const isTavern = pack.id === 'tavern'
 
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -28,7 +29,7 @@ export default function ModePicker() {
           return (
             <button
               key={p.id}
-              className={`flex-1 rounded-xl border px-2 py-2.5 text-center ${
+              className={`flex-1 rounded-xl border px-1.5 py-2.5 text-center ${
                 active ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-700'
               }`}
               onClick={() => {
@@ -45,11 +46,11 @@ export default function ModePicker() {
         })}
       </div>
 
-      {isSettings ? (
+      {!isMinimal ? (
         <div className="mt-5">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs text-neutral-500">
-              {settings.length > 0 ? '选设定文件，可多选' : '还没有设定文件'}
+              {isTavern ? '挂一份角色设定' : '挂设定文件，可多选'}
             </span>
             <button
               className="flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-600"
@@ -125,7 +126,7 @@ export default function ModePicker() {
             </div>
           )}
 
-          {selected.length > 0 && (
+          {selected.length > 0 ? (
             <button
               className="mt-3 w-full rounded-xl bg-neutral-900 py-2.5 text-sm text-white disabled:opacity-40"
               disabled={starting}
@@ -136,13 +137,22 @@ export default function ModePicker() {
             >
               开始（挂 {selected.length} 份设定）
             </button>
+          ) : (
+            !isTavern && (
+              <button
+                className="mt-3 w-full rounded-xl border border-neutral-200 py-2.5 text-sm text-neutral-700"
+                onClick={() => void setPack('minimal')}
+              >
+                不挂设定，直接写
+              </button>
+            )
           )}
         </div>
       ) : (
         <p className="mt-6 text-center text-[11px] leading-relaxed text-neutral-400">
           直接在下面输入即可
           <br />
-          想挂设定就切到「设定」
+          想挂设定就切到「写作」或「酒馆」
         </p>
       )}
     </div>

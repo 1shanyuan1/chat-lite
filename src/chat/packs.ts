@@ -24,19 +24,35 @@ const MINIMAL: PromptPack = {
 }
 
 /**
- * 设定：角色对话与写作共用。
- * 两者的区别不在模式，而在挂了什么设定文件、以及用户怎么说话。
+ * 写作：和酒馆同一套引擎，但不限于角色扮演。
+ * 用户可能在续写、也可能在下指令（「这里太慢」「换个视角」），所以给一排动作。
  */
-const SETTINGS: PromptPack = {
-  id: 'settings',
-  name: '设定',
-  hint: '挂设定文件，对话或写作都行',
+const WRITING: PromptPack = {
+  id: 'writing',
+  name: '写作',
+  hint: '推进文本，可以下指令',
   systemPrompt:
-    '你与用户共同推进一段对话或文本。严格遵循设定文件中的世界观、人物与口吻，只输出内容本身，不要解释你的思路，不要跳出设定做总结。当用户给出的是指令（例如要求继续、加快、换个角度），按指令直接写，不要复述指令。',
+    '你与用户共同推进一段文本。严格遵循设定文件中的世界观、人物与文风，只输出文本本身，不要解释你的思路，不要复述用户的指令，不要加「以下是」这类套话。当用户给出的是修改意见时，直接按要求重写，不要说「好的我来修改」。',
+  actions: [
+    { id: 'continue', label: '继续写', template: '接着上文往下写，保持人称、时态和语感一致，只输出新增的部分：\n\n{{input}}' },
+    { id: 'pov', label: '换个角度', template: '换一个视角重写下面这段，保持信息与节奏不变：\n\n{{input}}' },
+    { id: 'detail', label: '加细节', template: '给下面这段补上具体的动作与感官细节，不要增加新情节：\n\n{{input}}' },
+    { id: 'tighten', label: '收紧', template: '把下面这段压到大约一半长度，删掉重复和铺垫，保留关键动作：\n\n{{input}}' },
+    { id: 'close', label: '收束', template: '给当前这一段收尾，不要总结全文，留一个自然往下走的钩子：\n\n{{input}}' },
+  ],
+}
+
+/** 酒馆：以角色身份对话，不给按钮 */
+const TAVERN: PromptPack = {
+  id: 'tavern',
+  name: '酒馆',
+  hint: '以角色身份说话',
+  systemPrompt:
+    '你正在与用户进行角色扮演。始终以设定文件中角色的口吻说话，不要跳出角色解释、总结或评价。场景与背景参考设定文件。',
   actions: [],
 }
 
-export const BUILTIN_PACKS: PromptPack[] = [MINIMAL, SETTINGS]
+export const BUILTIN_PACKS: PromptPack[] = [MINIMAL, WRITING, TAVERN]
 
 export const DEFAULT_PACK_ID = MINIMAL.id
 

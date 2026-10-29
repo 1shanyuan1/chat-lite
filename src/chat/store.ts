@@ -330,7 +330,12 @@ export const useApp = create<AppState>()((set, get) => {
       if (docs.length === 0) return
 
       const title = docs.length === 1 ? docs[0].name : docs.map((d) => d.name).join(' · ').slice(0, 20)
-      const session = await getRepo().createSession(title, undefined, 'settings', docs.map((d) => d.id))
+      const session = await getRepo().createSession(
+        title,
+        undefined,
+        get().config.packId ?? 'tavern',
+        docs.map((d) => d.id)
+      )
 
       const greeting = pickGreeting(docs, get().config.userName ?? '你')
       if (greeting) {
