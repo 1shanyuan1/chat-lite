@@ -40,19 +40,17 @@ const WRITING: PromptPack = {
   ],
 }
 
-/** 角色：保持人设，提供推进剧情的动作 */
+/**
+ * 角色：只保留姿态说明，不给按钮。
+ * 酒馆里的下一步应该是「说话」，不是「点功能」，快捷动作会把扮演变成操作面板。
+ */
 const ROLEPLAY: PromptPack = {
   id: 'roleplay',
   name: '角色',
-  hint: '保持角色口吻，适合对话式扮演',
+  hint: '保持角色口吻，只说话，不解释',
   systemPrompt:
     '你正在与用户进行角色扮演。始终以角色本人的口吻说话，不要跳出角色解释或总结。角色设定与背景请参考用户的补充说明。',
-  actions: [
-    { id: 'narration', label: '旁白', template: '用第三人称旁白继续推进场景，不要替我做决定，两三句话即可：\n\n{{input}}' },
-    { id: 'scene', label: '描写场景', template: '用两三句话描写当前场景与氛围，只写环境，不要对白：\n\n{{input}}' },
-    { id: 'twist', label: '推进剧情', template: '让当前场景发生一个自然的转折，保持人物性格一致，不要突然跳到结局：\n\n{{input}}' },
-    { id: 'wait', label: '我来说', template: '接下来由我发言，你这次只做很简短的回应，把空间留给我：\n\n{{input}}' },
-  ],
+  actions: [],
 }
 
 export const BUILTIN_PACKS: PromptPack[] = [MINIMAL, WRITING, ROLEPLAY]

@@ -461,25 +461,27 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
     <div className="border-t border-neutral-100 bg-white px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-1.5">
       {meter}
 
-      <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
-        <button
-          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
-            packOpen ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
-          }`}
-          onClick={() => setPackOpen((v) => !v)}
-        >
-          {pack.name}
-        </button>
-        {pack.actions.map((action) => (
+      {pack.actions.length > 0 && (
+        <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
           <button
-            key={action.id}
-            className="shrink-0 rounded-full border border-neutral-200 px-2 py-0.5 text-[11px] text-neutral-600 active:bg-neutral-100"
-            onClick={() => applyAction(action.template)}
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+              packOpen ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+            }`}
+            onClick={() => setPackOpen((v) => !v)}
           >
-            {action.label}
+            {pack.name}
           </button>
-        ))}
-      </div>
+          {pack.actions.map((action) => (
+            <button
+              key={action.id}
+              className="shrink-0 rounded-full border border-neutral-200 px-2 py-0.5 text-[11px] text-neutral-600 active:bg-neutral-100"
+              onClick={() => applyAction(action.template)}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {packOpen && (
         <div className="mb-1.5 rounded-lg bg-neutral-50 p-2">
