@@ -586,6 +586,91 @@ await st().startWithSettings([doc.id])
 await st().send('测试档位')
 ok(captured.reasoning_effort === 'high', `配置的档位进了请求（${captured.reasoning_effort}）`)
 
+/* ---------------- 组合包（charx / zip） ---------------- */
+section('组合包')
+
+const { readBundle, pickIconAsset, resolveEmbededUri, bytesToDataUrl, findZipOffset, entryText, isJson: isJsonPath } = await import('@/chat/bundle')
+const entryTextOf = entryText
+const { zipSync, strToU8 } = await import('fflate')
+
+/** 造一张最小 PNG，用作包内头像 */
+function tinyPng() {
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4)
+    len.writeUInt32BE(data.length)
+    return Buffer.concat([len, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)])
+  }
+  return new Uint8Array(
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IEND', Buffer.alloc(0)),
+    ])
+  )
+}
+
+const avatarBytes = tinyPng()
+const cardV3 = {
+  spec: 'chara_card_v3',
+  spec_version: '3.0',
+  data: {
+    name: '铁匠',
+    first_mes: '「要打点什么？」',
+    description: '镇上的铁匠',
+    assets: [{ type: 'icon', uri: 'embeded://assets/icon/images/avatar.png', name: 'Avatar', ext: 'png' }],
+  },
+}
+
+const charx = zipSync({
+  'card.json': strToU8(JSON.stringify(cardV3)),
+  'assets/icon/images/avatar.png': avatarBytes,
+  'x_meta/0.json': strToU8('{"a":1}'),
+  'module.risum': new Uint8Array([1, 2, 3]),
+})
+
+const bundleEntries = readBundle(charx.buffer.slice(charx.byteOffset, charx.byteOffset + charx.byteLength))
+ok(bundleEntries.length === 2, `组合包解出 2 个有用文件（实际 ${bundleEntries.length}）`)
+ok(bundleEntries.some((e) => e.path === 'card.json'), '认得出根目录的 card.json')
+ok(bundleEntries.some((e) => e.path === 'assets/icon/images/avatar.png'), '头像在包里')
+ok(!bundleEntries.some((e) => e.path.startsWith('x_meta/')), '跳过 Risu 的 x_meta')
+ok(!bundleEntries.some((e) => e.path.endsWith('.risum')), '跳过二进制脚本模块')
+
+ok(pickIconAsset(cardV3) === 'embeded://assets/icon/images/avatar.png', '从 assets 里挑出主头像')
+ok(pickIconAsset({ data: { name: 'x' } }) === undefined, '没有 assets 时返回 undefined')
+ok(resolveEmbededUri('embeded://assets/icon/images/avatar.png', bundleEntries)?.path === 'assets/icon/images/avatar.png', 'embeded:// 解析到包内路径')
+ok(resolveEmbededUri('embeded://nope.png', bundleEntries) === undefined, '指向不存在的资源返回 undefined')
+
+const dataUrl = bytesToDataUrl(avatarBytes)
+ok(dataUrl.startsWith('data:image/png;base64,'), '字节转成 data URL')
+ok(dataUrl.length > 40, 'data URL 有内容')
+
+// Risu 的「mullet」格式：JPEG 头 + ZIP
+const hybrid = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...charx])
+ok(findZipOffset(hybrid) === 4, '跳过 JPEG 头找到 zip 起点')
+ok(readBundle(hybrid.buffer).length === 2, '混合包照样能解')
+ok(findZipOffset(new Uint8Array([1, 2, 3])) === -1, '不是 zip 时返回 -1')
+ok((() => {
+  try {
+    readBundle(new Uint8Array([1, 2, 3]).buffer)
+    return false
+  } catch {
+    return true
+  }
+})(), '不是 zip 时给出明确错误')
+
+// 不是 CHARX 的普通压缩包：应该能逐个数出内容
+const mixedZip = zipSync({
+  '夜航世界观.json': strToU8(JSON.stringify({ name: '夜航世界观', entries: { 0: { keys: ['电台'], content: '节目叫《夜航》' } } })),
+  'another/角色.json': strToU8(JSON.stringify({ name: '阿岚', first_mes: '「来了？」', description: '旅人' })),
+  'readme.txt': strToU8('忽略我'),
+})
+const mixed = readBundle(mixedZip.buffer.slice(mixedZip.byteOffset, mixedZip.byteOffset + mixedZip.byteLength))
+ok(mixed.length === 3, `普通压缩包解出 ${mixed.length} 个文件`)
+ok(mixed.filter((e) => isJsonPath(e.path)).length === 2, '其中两个是 JSON')
+const kinds = mixed
+  .filter((e) => isJsonPath(e.path))
+  .map((e) => detectKind(JSON.parse(entryTextOf(e))))
+ok(kinds.includes('world') && kinds.includes('character'), `按内容分别识别为 ${kinds.join(' / ')}`)
+
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))
 console.log(`通过 ${passed} 项，失败 ${failed} 项`)

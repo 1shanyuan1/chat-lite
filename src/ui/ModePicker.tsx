@@ -69,7 +69,7 @@ export default function ModePicker() {
             <input
               ref={fileRef}
               type="file"
-              accept=".png,.json,.txt,application/json,image/png,text/plain"
+              accept=".png,.json,.txt,.charx,.zip,application/json,image/png,text/plain,application/zip"
               multiple
               className="hidden"
               onChange={(e) => void importFiles(e.target.files)}
