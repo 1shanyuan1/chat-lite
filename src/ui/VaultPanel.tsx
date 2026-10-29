@@ -1,16 +1,16 @@
 import { useState } from 'react'
-import { emptySetting, type SettingDoc } from '@/chat/settings'
+import { emptySetting, type DocKind, type SettingDoc } from '@/chat/settings'
 import { useApp } from '@/chat/store'
 import type { PresetItem, PromptItem } from '@/chat/vault'
 import { PlusIcon } from './icons'
 import { useImportFiles } from './useImportFiles'
 
-type Kind = 'setting' | 'preset' | 'prompt'
+type Area = 'tavern' | 'writing' | 'common'
 
-const KINDS: Array<{ id: Kind; label: string; hint: string }> = [
-  { id: 'setting', label: '设定', hint: '角色、世界观、风格都写这里；一个会话可挂多份' },
-  { id: 'preset', label: '预设', hint: 'top_p、输出长度（温度已不再支持）' },
-  { id: 'prompt', label: '提示词', hint: '可复用的系统提示词片段' },
+const AREAS: Array<{ id: Area; label: string; hint: string }> = [
+  { id: 'tavern', label: '酒馆', hint: '角色卡与世界书，保持社区格式，可与 SillyTavern 互导' },
+  { id: 'writing', label: '写作', hint: '设定文件，自由写法，不要求任何格式' },
+  { id: 'common', label: '通用', hint: '预设与提示词，两种模式都能用' },
 ]
 
 const field = 'w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400'
@@ -32,6 +32,41 @@ function Sheet({ title, children, onClose }: { title: string; children: React.Re
   )
 }
 
+function DocRow({ doc, onEdit, onDelete, onStart }: { doc: SettingDoc; onEdit: () => void; onDelete: () => void; onStart: () => void }) {
+  const meta =
+    [
+      doc.entries.length > 0 ? `${doc.entries.length} 条条目` : '',
+      doc.firstMessage ? '有开场白' : '',
+      doc.body ? `${doc.body.length} 字正文` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ') || '空'
+
+  return (
+    <div className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
+      <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onEdit}>
+        {doc.avatar ? (
+          <img src={doc.avatar} alt={doc.name} className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+        ) : (
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-[11px] text-neutral-400">
+            {doc.name.slice(0, 1)}
+          </div>
+        )}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-neutral-800">{doc.name}</span>
+          <span className="block truncate text-[10px] text-neutral-400">{meta}</span>
+        </span>
+      </button>
+      <button className="shrink-0 rounded-md bg-neutral-900 px-2 py-0.5 text-[10px] text-white" onClick={onStart}>
+        开始
+      </button>
+      <button className="shrink-0 text-[11px] text-neutral-300 active:text-red-500" onClick={onDelete}>
+        删除
+      </button>
+    </div>
+  )
+}
+
 export default function VaultPanel() {
   const {
     settings,
@@ -49,27 +84,34 @@ export default function VaultPanel() {
   } = useApp()
   const { importFiles, busy, error, fileRef } = useImportFiles()
 
-  const [kind, setKind] = useState<Kind>('setting')
-  const [editingSetting, setEditingSetting] = useState<SettingDoc | null>(null)
+  const [area, setArea] = useState<Area>('tavern')
+  const [editing, setEditing] = useState<SettingDoc | null>(null)
   const [editingPreset, setEditingPreset] = useState<PresetItem | null>(null)
   const [editingPrompt, setEditingPrompt] = useState<PromptItem | null>(null)
 
-  const counts = { setting: settings.length, preset: presets.length, prompt: prompts.length }
+  const characters = settings.filter((d) => d.kind === 'character')
+  const worlds = settings.filter((d) => d.kind === 'world')
+  const docs = settings.filter((d) => d.kind === 'setting')
+
+  const newDoc = (kind: DocKind) => {
+    const doc = emptySetting(kind)
+    doc.name = kind === 'character' ? '新角色' : kind === 'world' ? '新世界书' : '新设定'
+    setEditing(doc)
+  }
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-4 pb-2 pt-1">
         <div className="flex gap-1">
-          {KINDS.map((k) => (
+          {AREAS.map((a) => (
             <button
-              key={k.id}
+              key={a.id}
               className={`rounded-full px-2 py-0.5 text-[11px] ${
-                kind === k.id ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                area === a.id ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
               }`}
-              onClick={() => setKind(k.id)}
+              onClick={() => setArea(a.id)}
             >
-              {k.label}
-              {counts[k.id] > 0 && <span className="ml-1 opacity-60">{counts[k.id]}</span>}
+              {a.label}
             </button>
           ))}
         </div>
@@ -91,129 +133,197 @@ export default function VaultPanel() {
         />
       </div>
 
-      <p className="px-4 pb-2 text-[10px] text-neutral-400">{KINDS.find((k) => k.id === kind)?.hint}</p>
+      <p className="px-4 pb-2 text-[10px] text-neutral-400">{AREAS.find((a) => a.id === area)?.hint}</p>
       {error && <p className="px-4 pb-2 text-[11px] text-red-500">{error}</p>}
 
       <div className="flex-1 overflow-y-auto">
-        {counts[kind] === 0 && (
-          <p className="px-4 py-8 text-center text-[11px] leading-relaxed text-neutral-400">
-            还没有{KINDS.find((k) => k.id === kind)?.label}
-            <br />
-            导入的文件会复制到本机，可随时修改
-          </p>
+        {area === 'tavern' && (
+          <>
+            <div className="flex items-center justify-between bg-neutral-50 px-4 py-1">
+              <span className="text-[10px] text-neutral-500">角色卡 · {characters.length}</span>
+              <button className="text-[10px] text-blue-600" onClick={() => newDoc('character')}>
+                新建
+              </button>
+            </div>
+            {characters.length === 0 && (
+              <p className="px-4 py-4 text-center text-[11px] text-neutral-400">导入 SillyTavern 的 PNG 角色卡</p>
+            )}
+            {characters.map((doc) => (
+              <DocRow
+                key={doc.id}
+                doc={doc}
+                onEdit={() => setEditing(doc)}
+                onDelete={() => removeSetting(doc.id)}
+                onStart={() => void startWithSettings([doc.id])}
+              />
+            ))}
+
+            <div className="mt-1 flex items-center justify-between bg-neutral-50 px-4 py-1">
+              <span className="text-[10px] text-neutral-500">世界书 · {worlds.length}</span>
+              <button className="text-[10px] text-blue-600" onClick={() => newDoc('world')}>
+                新建
+              </button>
+            </div>
+            {worlds.length === 0 && (
+              <p className="px-4 py-4 text-center text-[11px] text-neutral-400">导入世界书 JSON，或手动新建条目</p>
+            )}
+            {worlds.map((doc) => (
+              <DocRow
+                key={doc.id}
+                doc={doc}
+                onEdit={() => setEditing(doc)}
+                onDelete={() => removeSetting(doc.id)}
+                onStart={() => void startWithSettings([doc.id])}
+              />
+            ))}
+          </>
         )}
 
-        {kind === 'setting' &&
-          settings.map((doc) => (
-            <div key={doc.id} className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
-              <button className="min-w-0 flex-1 text-left" onClick={() => setEditingSetting(doc)}>
-                <div className="truncate text-sm text-neutral-800">{doc.name}</div>
-                <div className="truncate text-[10px] text-neutral-400">
-                  {doc.entries.length} 条条目{doc.firstMessage ? ' · 有开场白' : ''} · {doc.body.length} 字设定
-                </div>
-              </button>
-              <button
-                className="shrink-0 rounded-md bg-neutral-900 px-2 py-0.5 text-[10px] text-white"
-                onClick={() => void startWithSettings([doc.id])}
-              >
-                对话
-              </button>
-              <button className="shrink-0 text-[11px] text-neutral-300" onClick={() => removeSetting(doc.id)}>
-                删除
+        {area === 'writing' && (
+          <>
+            <div className="flex items-center justify-between bg-neutral-50 px-4 py-1">
+              <span className="text-[10px] text-neutral-500">设定 · {docs.length}</span>
+              <button className="text-[10px] text-blue-600" onClick={() => newDoc('setting')}>
+                新建
               </button>
             </div>
-          ))}
+            {docs.length === 0 && (
+              <p className="px-4 py-6 text-center text-[11px] leading-relaxed text-neutral-400">
+                设定是自由格式：人物、世界观、文风都可以写
+                <br />
+                一个会话可以挂多份
+              </p>
+            )}
+            {docs.map((doc) => (
+              <DocRow
+                key={doc.id}
+                doc={doc}
+                onEdit={() => setEditing(doc)}
+                onDelete={() => removeSetting(doc.id)}
+                onStart={() => void startWithSettings([doc.id])}
+              />
+            ))}
+          </>
+        )}
 
-        {kind === 'preset' &&
-          presets.map((item) => (
-            <div key={item.id} className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
-              <button className="min-w-0 flex-1 text-left" onClick={() => setEditingPreset(item)}>
-                <div className="truncate text-sm text-neutral-800">{item.name}</div>
-                <div className="truncate text-[10px] text-neutral-400">
-                  {[item.topP !== undefined ? `top_p ${item.topP}` : '', item.maxTokens ? `长度 ${item.maxTokens}` : '']
-                    .filter(Boolean)
-                    .join(' · ') || '未设置参数'}
-                </div>
-              </button>
+        {area === 'common' && (
+          <>
+            <div className="flex items-center justify-between bg-neutral-50 px-4 py-1">
+              <span className="text-[10px] text-neutral-500">预设 · {presets.length}</span>
               <button
-                className="shrink-0 rounded-md bg-neutral-900 px-2 py-0.5 text-[10px] text-white"
-                onClick={() => applyPreset(item)}
+                className="text-[10px] text-blue-600"
+                onClick={() =>
+                  setEditingPreset({ id: crypto.randomUUID(), name: '', createdAt: Date.now(), updatedAt: Date.now() })
+                }
               >
-                应用
-              </button>
-              <button className="shrink-0 text-[11px] text-neutral-300" onClick={() => removePreset(item.id)}>
-                删除
+                新建
               </button>
             </div>
-          ))}
+            {presets.length === 0 && <p className="px-4 py-4 text-center text-[11px] text-neutral-400">导入预设 JSON</p>}
+            {presets.map((item) => (
+              <div key={item.id} className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
+                <button className="min-w-0 flex-1 text-left" onClick={() => setEditingPreset(item)}>
+                  <div className="truncate text-sm text-neutral-800">{item.name}</div>
+                  <div className="truncate text-[10px] text-neutral-400">
+                    {[item.topP !== undefined ? `top_p ${item.topP}` : '', item.maxTokens ? `长度 ${item.maxTokens}` : '']
+                      .filter(Boolean)
+                      .join(' · ') || '未设置参数'}
+                  </div>
+                </button>
+                <button
+                  className="shrink-0 rounded-md bg-neutral-900 px-2 py-0.5 text-[10px] text-white"
+                  onClick={() => applyPreset(item)}
+                >
+                  应用
+                </button>
+                <button className="shrink-0 text-[11px] text-neutral-300" onClick={() => removePreset(item.id)}>
+                  删除
+                </button>
+              </div>
+            ))}
 
-        {kind === 'prompt' &&
-          prompts.map((item) => (
-            <div key={item.id} className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
-              <button className="min-w-0 flex-1 text-left" onClick={() => setEditingPrompt(item)}>
-                <div className="truncate text-sm text-neutral-800">{item.name}</div>
-                <div className="truncate text-[10px] text-neutral-400">{item.text.length} 字</div>
-              </button>
+            <div className="mt-1 flex items-center justify-between bg-neutral-50 px-4 py-1">
+              <span className="text-[10px] text-neutral-500">提示词 · {prompts.length}</span>
               <button
-                className="shrink-0 rounded-md bg-neutral-900 px-2 py-0.5 text-[10px] text-white"
-                onClick={() => applyPrompt(item)}
+                className="text-[10px] text-blue-600"
+                onClick={() =>
+                  setEditingPrompt({
+                    id: crypto.randomUUID(),
+                    name: '',
+                    text: '',
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                  })
+                }
               >
-                应用
-              </button>
-              <button className="shrink-0 text-[11px] text-neutral-300" onClick={() => removePrompt(item.id)}>
-                删除
+                新建
               </button>
             </div>
-          ))}
+            {prompts.map((item) => (
+              <div key={item.id} className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
+                <button className="min-w-0 flex-1 text-left" onClick={() => setEditingPrompt(item)}>
+                  <div className="truncate text-sm text-neutral-800">{item.name}</div>
+                  <div className="truncate text-[10px] text-neutral-400">{item.text.length} 字</div>
+                </button>
+                <button
+                  className="shrink-0 rounded-md bg-neutral-900 px-2 py-0.5 text-[10px] text-white"
+                  onClick={() => applyPrompt(item)}
+                >
+                  应用
+                </button>
+                <button className="shrink-0 text-[11px] text-neutral-300" onClick={() => removePrompt(item.id)}>
+                  删除
+                </button>
+              </div>
+            ))}
+          </>
+        )}
       </div>
 
-      <div className="border-t border-neutral-100 px-4 py-2">
-        <button
-          className="w-full rounded-lg border border-neutral-200 py-1.5 text-[11px] text-neutral-600"
-          onClick={() => {
-            if (kind === 'setting') setEditingSetting(emptySetting())
-            else if (kind === 'preset')
-              setEditingPreset({ id: crypto.randomUUID(), name: '', createdAt: Date.now(), updatedAt: Date.now() })
-            else setEditingPrompt({ id: crypto.randomUUID(), name: '', text: '', createdAt: Date.now(), updatedAt: Date.now() })
-          }}
+      {editing && (
+        <Sheet
+          title={editing.kind === 'character' ? '角色卡' : editing.kind === 'world' ? '世界书' : '设定'}
+          onClose={() => setEditing(null)}
         >
-          新建{KINDS.find((k) => k.id === kind)?.label}
-        </button>
-      </div>
-
-      {editingSetting && (
-        <Sheet title="设定文件" onClose={() => setEditingSetting(null)}>
           <input
             className={`${field} mb-3`}
-            placeholder="名字，例如「林深」或「夜航世界观」"
-            value={editingSetting.name}
-            onChange={(e) => setEditingSetting({ ...editingSetting, name: e.target.value })}
-          />
-          <label className="mb-1 block text-[11px] text-neutral-500">设定正文（常驻注入）</label>
-          <textarea
-            className={`${field} mb-3 h-40 resize-none`}
-            placeholder="人物、世界观、写作风格…写多少都行"
-            value={editingSetting.body}
-            onChange={(e) => setEditingSetting({ ...editingSetting, body: e.target.value })}
-          />
-          <label className="mb-1 block text-[11px] text-neutral-500">开场白（可选，有则开新会话时插入）</label>
-          <textarea
-            className={`${field} mb-3 h-20 resize-none`}
-            value={editingSetting.firstMessage ?? ''}
-            onChange={(e) => setEditingSetting({ ...editingSetting, firstMessage: e.target.value })}
+            placeholder="名字"
+            value={editing.name}
+            onChange={(e) => setEditing({ ...editing, name: e.target.value })}
           />
 
+          {editing.kind !== 'world' && (
+            <>
+              <label className="mb-1 block text-[11px] text-neutral-500">
+                {editing.kind === 'character' ? '设定正文（角色描述、性格、情境）' : '设定正文'}
+              </label>
+              <textarea
+                className={`${field} mb-3 h-40 resize-none`}
+                value={editing.body}
+                onChange={(e) => setEditing({ ...editing, body: e.target.value })}
+              />
+            </>
+          )}
+
+          {editing.kind === 'character' && (
+            <>
+              <label className="mb-1 block text-[11px] text-neutral-500">开场白（有则开新会话时插入）</label>
+              <textarea
+                className={`${field} mb-3 h-20 resize-none`}
+                value={editing.firstMessage ?? ''}
+                onChange={(e) => setEditing({ ...editing, firstMessage: e.target.value })}
+              />
+            </>
+          )}
+
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-[11px] text-neutral-500">关键词条目（{editingSetting.entries.length}）</span>
+            <span className="text-[11px] text-neutral-500">关键词条目（{editing.entries.length}）</span>
             <button
               className="text-[11px] text-blue-600"
               onClick={() =>
-                setEditingSetting({
-                  ...editingSetting,
-                  entries: [
-                    ...editingSetting.entries,
-                    { id: crypto.randomUUID(), keys: [], content: '', enabled: true },
-                  ],
+                setEditing({
+                  ...editing,
+                  entries: [...editing.entries, { id: crypto.randomUUID(), keys: [], content: '', enabled: true }],
                 })
               }
             >
@@ -221,7 +331,7 @@ export default function VaultPanel() {
             </button>
           </div>
 
-          {editingSetting.entries.map((entry) => (
+          {editing.entries.map((entry) => (
             <div key={entry.id} className="mb-2 rounded-lg border border-neutral-200 p-2">
               <div className="mb-1 flex items-center justify-between">
                 <label className="flex items-center gap-1 text-[10px] text-neutral-500">
@@ -229,9 +339,9 @@ export default function VaultPanel() {
                     type="checkbox"
                     checked={entry.enabled}
                     onChange={(e) =>
-                      setEditingSetting({
-                        ...editingSetting,
-                        entries: editingSetting.entries.map((x) =>
+                      setEditing({
+                        ...editing,
+                        entries: editing.entries.map((x) =>
                           x.id === entry.id ? { ...x, enabled: e.target.checked } : x
                         ),
                       })
@@ -241,12 +351,7 @@ export default function VaultPanel() {
                 </label>
                 <button
                   className="text-[10px] text-neutral-400"
-                  onClick={() =>
-                    setEditingSetting({
-                      ...editingSetting,
-                      entries: editingSetting.entries.filter((x) => x.id !== entry.id),
-                    })
-                  }
+                  onClick={() => setEditing({ ...editing, entries: editing.entries.filter((x) => x.id !== entry.id) })}
                 >
                   删除
                 </button>
@@ -257,9 +362,9 @@ export default function VaultPanel() {
                 value={entry.keys.join(', ')}
                 onChange={(e) => {
                   const keys = e.target.value.split(',').map((k) => k.trim()).filter(Boolean)
-                  setEditingSetting({
-                    ...editingSetting,
-                    entries: editingSetting.entries.map((x) => (x.id === entry.id ? { ...x, keys } : x)),
+                  setEditing({
+                    ...editing,
+                    entries: editing.entries.map((x) => (x.id === entry.id ? { ...x, keys } : x)),
                   })
                 }}
               />
@@ -268,11 +373,9 @@ export default function VaultPanel() {
                 placeholder="命中后注入的内容"
                 value={entry.content}
                 onChange={(e) =>
-                  setEditingSetting({
-                    ...editingSetting,
-                    entries: editingSetting.entries.map((x) =>
-                      x.id === entry.id ? { ...x, content: e.target.value } : x
-                    ),
+                  setEditing({
+                    ...editing,
+                    entries: editing.entries.map((x) => (x.id === entry.id ? { ...x, content: e.target.value } : x)),
                   })
                 }
               />
@@ -282,8 +385,8 @@ export default function VaultPanel() {
           <button
             className="mt-2 w-full rounded-xl bg-neutral-900 py-2.5 text-sm text-white"
             onClick={() => {
-              importSetting(editingSetting)
-              setEditingSetting(null)
+              importSetting(editing)
+              setEditing(null)
             }}
           >
             保存
@@ -314,10 +417,7 @@ export default function VaultPanel() {
                 onChange={(e) => {
                   const raw = e.target.value.trim()
                   const value = raw === '' ? undefined : Number(raw)
-                  setEditingPreset({
-                    ...editingPreset,
-                    [key]: Number.isFinite(value as number) ? value : undefined,
-                  })
+                  setEditingPreset({ ...editingPreset, [key]: Number.isFinite(value as number) ? value : undefined })
                 }}
               />
             </div>

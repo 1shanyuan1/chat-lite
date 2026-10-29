@@ -36,7 +36,7 @@ const { BUILTIN_PACKS, DEFAULT_PACK_ID, findPack, renderTemplate, composeSystemP
 const { normalizeCard, applyMacros, renderCard, extractCardFromPng } = await import('@/chat/characters')
 const { matchWorldEntries, renderWorldEntries, contextWindow } = await import('@/chat/lore')
 const { detectKind, toWorldItem, toPresetItem, toPromptItem, VAULT_KINDS } = await import('@/chat/vault')
-const { settingFromCard, settingFromWorld, settingFromText, renderSettings, collectEntries, pickGreeting } = await import('@/chat/settings')
+const { settingFromCard, settingFromWorld, settingFromText, renderSettings, collectEntries, pickGreeting, guessKind, emptySetting: makeSetting } = await import('@/chat/settings')
 
 let passed = 0
 let failed = 0
@@ -404,6 +404,20 @@ ok(collectEntries(two).length === 6, `合并多份设定的条目（${collectEnt
 
 ok(pickGreeting([fromWorld, fromCard], '旅人')?.text.includes('旅人'), '多份里挑带开场白的那份并替换宏')
 ok(pickGreeting([fromWorld], '旅人') === null, '都没有开场白时返回 null')
+
+// 三种文件各有身份：生态格式与自由格式不能混为一谈
+ok(fromCard.kind === 'character', '角色卡导入后 kind=character')
+ok(fromWorld.kind === 'world', '世界书导入后 kind=world')
+ok(fromText.kind === 'setting', '自由设定 kind=setting')
+ok(makeSetting().kind === 'setting', '新建默认是设定')
+ok(makeSetting('world').kind === 'world', '可以显式新建世界书')
+
+// 老数据没有 kind，按形状推断
+ok(guessKind({ firstMessage: '「来了」' }) === 'character', '有开场白 → 认作角色卡')
+ok(guessKind({ avatar: 'data:image/png;base64,x' }) === 'character', '有头像 → 认作角色卡')
+ok(guessKind({ entries: [{ id: 'e', keys: ['a'], content: 'b', enabled: true }] }) === 'world', '只有条目没正文 → 认作世界书')
+ok(guessKind({ body: '一段设定' }) === 'setting', '有正文 → 认作设定')
+ok(guessKind({ body: '正文', entries: [{ id: 'e', keys: ['a'], content: 'b', enabled: true }] }) === 'setting', '正文+条目 → 仍是设定')
 
 /* ---------------- 请求体装配（拦截平台层，不联网） ---------------- */
 section('请求装配')

@@ -1,5 +1,5 @@
 import type { CharacterCard } from '@/chat/characters'
-import { settingFromCard, settingFromWorld, type SettingDoc } from '@/chat/settings'
+import { guessKind, settingFromCard, settingFromWorld, type SettingDoc } from '@/chat/settings'
 import type { WorldItem } from '@/chat/vault'
 
 const KEY = 'cl.vault.setting'
@@ -28,7 +28,10 @@ function write(list: SettingDoc[]) {
 }
 
 export function listSettings(): SettingDoc[] {
-  return read().sort((a, b) => b.updatedAt - a.updatedAt)
+  // 老数据没有 kind，读的时候补上，保证旧会话不丢
+  return read()
+    .map((doc) => ({ ...doc, kind: guessKind(doc) }))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 export function saveSetting(doc: SettingDoc): SettingDoc[] {

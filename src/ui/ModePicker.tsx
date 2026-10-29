@@ -16,6 +16,11 @@ export default function ModePicker() {
   const isMinimal = pack.id === 'minimal'
   const isTavern = pack.id === 'tavern'
 
+  // 两种模式各看自己那一区的文件：酒馆只认角色卡/世界书，写作只认自由设定
+  const available = isTavern
+    ? settings.filter((d) => d.kind === 'character' || d.kind === 'world')
+    : settings.filter((d) => d.kind === 'setting')
+
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
 
@@ -51,7 +56,7 @@ export default function ModePicker() {
         <div className="mt-5">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs text-neutral-500">
-              {isTavern ? '挂一份角色设定' : '挂设定文件，可多选'}
+              {isTavern ? '选角色卡（可加世界书）' : '选设定文件，可多选'}
             </span>
             <button
               className="flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-600"
@@ -101,7 +106,7 @@ export default function ModePicker() {
             </div>
           )}
 
-          {settings.length === 0 ? (
+          {available.length === 0 ? (
             <div className="rounded-xl border border-dashed border-neutral-200 px-3 py-6 text-center">
               <p className="text-[11px] leading-relaxed text-neutral-400">
                 导入角色卡或世界书
@@ -111,7 +116,7 @@ export default function ModePicker() {
             </div>
           ) : (
             <div className="space-y-1.5">
-              {settings.map((doc) => {
+              {available.map((doc) => {
                 const active = selected.includes(doc.id)
                 return (
                   <div

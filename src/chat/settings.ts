@@ -13,8 +13,12 @@ export interface SettingEntry {
  * body 是常驻注入的设定（人物、世界观、风格都写这里），entries 是关键词触发的条目。
  * 一个会话可以挂任意多个，也可以一个都不挂（就是普通聊天）。
  */
+/** 生态格式与自由格式要分开：角色卡/世界书是从社区来的，设定是自家写法 */
+export type DocKind = 'character' | 'world' | 'setting'
+
 export interface SettingDoc {
   id: string
+  kind: DocKind
   name: string
   body: string
   entries: SettingEntry[]
@@ -25,8 +29,9 @@ export interface SettingDoc {
   updatedAt: number
 }
 
-export const emptySetting = (): SettingDoc => ({
+export const emptySetting = (kind: DocKind = 'setting'): SettingDoc => ({
   id: crypto.randomUUID(),
+  kind,
   name: '',
   body: '',
   entries: [],
@@ -47,6 +52,7 @@ export function settingFromCard(card: CharacterCard): SettingDoc {
   )
   return {
     id: card.id,
+    kind: 'character',
     name: card.name || '未命名设定',
     body,
     entries: card.worldInfo.map((e) => ({ ...e })),
@@ -64,6 +70,7 @@ export function settingFromWorld(
 ): SettingDoc {
   return {
     id: item.id ?? crypto.randomUUID(),
+    kind: 'world',
     name: item.name || '未命名设定',
     body,
     entries: item.entries.map((e) => ({ ...e })),
@@ -76,12 +83,21 @@ export function settingFromWorld(
 export function settingFromText(name: string, body: string): SettingDoc {
   return {
     id: crypto.randomUUID(),
+    kind: 'setting',
     name: name || '未命名设定',
     body,
     entries: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
+}
+
+/** 老数据没有 kind，按形状猜一个 */
+export function guessKind(doc: Partial<SettingDoc>): DocKind {
+  if (doc.kind) return doc.kind
+  if (doc.firstMessage || doc.avatar) return 'character'
+  if ((doc.entries?.length ?? 0) > 0 && !doc.body?.trim()) return 'world'
+  return 'setting'
 }
 
 /** 把一份设定渲染成注入 system prompt 的文本块 */
