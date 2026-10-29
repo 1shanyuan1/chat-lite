@@ -215,7 +215,7 @@ function ModelPicker({
 }
 
 function SettingsSheet() {
-  const { config, saveConfig, settingsOpen, setSettings, setPack } = useApp()
+  const { config, saveConfig, settingsOpen, setSettings } = useApp()
   const [draft, setDraft] = useState<ChatConfig>(config)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [loading, setLoading] = useState(false)
@@ -341,27 +341,6 @@ function SettingsSheet() {
             </button>
           ))}
         </div>
-
-        <label className="mb-1 block text-xs text-neutral-500">提示词包</label>
-        <div className="mb-1 flex gap-1.5">
-          {BUILTIN_PACKS.map((p) => (
-            <button
-              key={p.id}
-              className={`flex-1 rounded-lg border px-2 py-1 text-[11px] ${
-                (draft.packId ?? 'minimal') === p.id
-                  ? 'border-neutral-900 bg-neutral-900 text-white'
-                  : 'border-neutral-200 text-neutral-600'
-              }`}
-              onClick={() => {
-                setDraft({ ...draft, packId: p.id })
-                void setPack(p.id)
-              }}
-            >
-              {p.name}
-            </button>
-          ))}
-        </div>
-        <p className="mb-3 text-[10px] leading-relaxed text-neutral-400">{findPack(draft.packId).hint}</p>
 
         <div className="mb-1 flex items-center justify-between">
           <label className="block text-xs text-neutral-500">模型</label>
