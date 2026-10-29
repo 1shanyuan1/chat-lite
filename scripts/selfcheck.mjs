@@ -780,6 +780,59 @@ ok(dataUrlToBytes(avatarDataUrl)?.ext === 'png', '解析出图片后缀')
 ok(charxFileName('林深').endsWith('.charx'), '导出文件名带 .charx')
 ok(!/[\\/:*?"<>|]/.test(charxFileName('a/b:c')), '文件名过滤非法字符')
 
+/* ---------------- 导出 PNG 卡 ---------------- */
+section('导出 PNG 卡')
+
+const { buildPngCard, pngCardFileName } = await import('@/chat/png-export')
+
+const pngDoc = { ...fromCard, id: 'png1', avatar: avatarDataUrl }
+const pngCard = buildPngCard(pngDoc)
+ok(pngCard instanceof Uint8Array, '生成了 PNG 字节')
+
+// 自己读回来：extractCardFromPng 走 tEXt 块
+const backFromPng = normalizeCard(extractCardFromPng(pngCard.buffer.slice(pngCard.byteOffset, pngCard.byteOffset + pngCard.byteLength)))
+ok(backFromPng.name === fromCard.name, 'PNG 里的卡能被自己读回名字')
+ok(backFromPng.firstMessage === fromCard.firstMessage, '开场白读回来了')
+ok(backFromPng.worldInfo.length === fromCard.entries.length, '条目读回来了')
+
+// 结构检查：签名、两个 tEXt 块、CRC 正确
+const pngView = new DataView(pngCard.buffer, pngCard.byteOffset, pngCard.byteLength)
+ok(pngView.getUint32(0) === 0x89504e47, 'PNG 签名不变')
+const keywords = []
+let walk = 8
+let crcValid = true
+while (walk + 8 <= pngCard.length) {
+  const len = pngView.getUint32(walk)
+  const type = String.fromCharCode(pngCard[walk + 4], pngCard[walk + 5], pngCard[walk + 6], pngCard[walk + 7])
+  if (type === 'tEXt') {
+    const data = pngCard.subarray(walk + 8, walk + 8 + len)
+    const zero = data.indexOf(0)
+    keywords.push(new TextDecoder('latin1').decode(data.subarray(0, zero)))
+    // 校验 CRC：块类型 + 数据
+    const crcSlice = pngCard.subarray(walk + 4, walk + 8 + len)
+    let c = 0xffffffff
+    for (let i = 0; i < crcSlice.length; i++) {
+      c ^= crcSlice[i]
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    }
+    const expect = (c ^ 0xffffffff) >>> 0
+    if (expect !== pngView.getUint32(walk + 8 + len)) crcValid = false
+  }
+  if (type === 'IEND') break
+  walk += 12 + len
+}
+ok(keywords.includes('chara'), '写了 chara 块（V2，老工具读）')
+ok(keywords.includes('ccv3'), '写了 ccv3 块（V3，新工具优先）')
+ok(crcValid, '两个 tEXt 块的 CRC 都正确——损坏的 CRC 会被严格解析器拒收')
+
+ok(buildPngCard({ ...fromCard, id: 'x', avatar: undefined }) === null, '没有头像时返回 null')
+ok(
+  buildPngCard({ ...fromCard, id: 'y', avatar: 'data:image/jpeg;base64,/9j/4AAQ' }) === null,
+  '头像不是 PNG 时返回 null（tEXt 只能写进 PNG）'
+)
+ok(pngCardFileName('林深').endsWith('.png'), '文件名带 .png')
+ok(!/[\\/:*?"<>|]/.test(pngCardFileName('a/b:c')), 'PNG 文件名过滤非法字符')
+
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))
 console.log(`通过 ${passed} 项，失败 ${failed} 项`)

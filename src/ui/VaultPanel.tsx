@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { buildBundle, bundleFileName, collectBundleItems } from '@/chat/bundle-export'
 import { buildCharx, charxFileName } from '@/chat/charx-export'
+import { buildPngCard, pngCardFileName } from '@/chat/png-export'
 import { FOLDER_CONTENTS, type FolderArea } from '@/chat/folders'
 import { humanizeError } from '@/chat/errors'
 import { platform } from '@/platform'
@@ -558,20 +559,39 @@ export default function VaultPanel() {
           ))}
 
           {editing.kind === 'character' && (
-            <button
-              className="mt-2 w-full rounded-xl border border-neutral-200 py-2.5 text-sm text-neutral-700"
-              onClick={async () => {
-                try {
-                  // 先存一次，保证导出的是眼前这份
-                  importSetting(editing)
-                  await platform().exportBinaryFile(charxFileName(editing.name), buildCharx(editing), 'application/zip')
-                } catch (e) {
-                  alert(humanizeError(e))
-                }
-              }}
-            >
-              导出为 CHARX（含头像，可发给别人）
-            </button>
+            <div className="mt-2 space-y-1.5">
+              <button
+                className="w-full rounded-xl border border-neutral-200 py-2.5 text-sm text-neutral-700"
+                onClick={async () => {
+                  try {
+                    importSetting(editing)
+                    const png = buildPngCard(editing)
+                    if (!png) {
+                      alert('这张卡没有 PNG 头像，无法写回 PNG。请用 CHARX 或 JSON 导出。')
+                      return
+                    }
+                    await platform().exportBinaryFile(pngCardFileName(editing.name), png, 'image/png')
+                  } catch (e) {
+                    alert(humanizeError(e))
+                  }
+                }}
+              >
+                导出为 PNG（SillyTavern 直接拖入）
+              </button>
+              <button
+                className="w-full rounded-xl border border-neutral-200 py-2.5 text-sm text-neutral-700"
+                onClick={async () => {
+                  try {
+                    importSetting(editing)
+                    await platform().exportBinaryFile(charxFileName(editing.name), buildCharx(editing), 'application/zip')
+                  } catch (e) {
+                    alert(humanizeError(e))
+                  }
+                }}
+              >
+                导出为 CHARX（V3 生态）
+              </button>
+            </div>
           )}
 
           <button

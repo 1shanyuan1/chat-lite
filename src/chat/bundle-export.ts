@@ -1,4 +1,5 @@
 import { strToU8, zipSync } from 'fflate'
+import { cardToV2 } from './card-json'
 import type { SettingDoc } from './settings'
 import type { PresetItem } from './vault'
 
@@ -8,33 +9,6 @@ export interface BundleItem {
   /** 文件名（不含目录），manifest 里引用 */
   file: string
   payload: unknown
-}
-
-/** 角色卡导出成 V2 JSON：SillyTavern 与各类工具都能直接吃 */
-function cardToV2(doc: SettingDoc) {
-  return {
-    spec: 'chara_card_v2',
-    spec_version: '2.0',
-    data: {
-      name: doc.name,
-      description: doc.body,
-      personality: '',
-      scenario: '',
-      first_mes: doc.firstMessage ?? '',
-      mes_example: '',
-      creator_notes: '从 Chat Lite 导出',
-      system_prompt: '',
-      post_history_instructions: '',
-      character_book: {
-        entries: doc.entries.map((e) => ({
-          keys: e.keys,
-          content: e.content,
-          enabled: e.enabled,
-          insertion_order: 0,
-        })),
-      },
-    },
-  }
 }
 
 /** 世界书导出成 { entries: { 0: {...} } }，与 ST 的 world info 结构一致 */

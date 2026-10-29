@@ -1,4 +1,5 @@
 import { strToU8, zipSync } from 'fflate'
+import { cardToV3 } from './card-json'
 import type { SettingDoc } from './settings'
 
 const AVATAR_PATH = 'assets/icon/images/avatar.png'
@@ -27,50 +28,10 @@ export function buildCharx(doc: SettingDoc): Uint8Array {
   const avatar = dataUrlToBytes(doc.avatar)
   const files: Record<string, Uint8Array> = {}
 
-  const card = {
-    spec: 'chara_card_v3',
-    spec_version: '3.0',
-    data: {
-      name: doc.name,
-      description: doc.body,
-      personality: '',
-      scenario: '',
-      first_mes: doc.firstMessage ?? '',
-      mes_example: '',
-      creator_notes: '从 Chat Lite 导出',
-      system_prompt: '',
-      post_history_instructions: '',
-      tags: [],
-      creator: 'Chat Lite',
-      character_version: '1.0',
-      extensions: {},
-      character_book: {
-        name: `${doc.name} 的世界书`,
-        entries: doc.entries.map((entry, index) => ({
-          id: index,
-          keys: entry.keys,
-          content: entry.content,
-          enabled: entry.enabled,
-          insertion_order: index,
-          case_sensitive: false,
-          selective: false,
-          constant: Boolean(entry.constant),
-          extensions: {},
-        })),
-      },
-      // 头像写进 assets，卡里用 embeded:// 引用（规范就是少一个 d）
-      assets: avatar
-        ? [
-            {
-              type: 'icon',
-              uri: `embeded://${avatar.ext === 'jpg' ? 'assets/icon/images/avatar.jpg' : AVATAR_PATH}`,
-              name: 'main',
-              ext: avatar.ext,
-            },
-          ]
-        : [],
-    },
-  }
+  const assetUri = avatar
+    ? `embeded://${avatar.ext === 'jpg' ? 'assets/icon/images/avatar.jpg' : AVATAR_PATH}`
+    : undefined
+  const card = cardToV3(doc, assetUri, avatar?.ext)
 
   files['card.json'] = strToU8(JSON.stringify(card, null, 2))
   if (avatar) {
