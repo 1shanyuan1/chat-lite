@@ -19,6 +19,7 @@ import {
 import { useApp } from '@/chat/store'
 import { findTurnHits, hitElementId } from '@/chat/hit-nav'
 import { activeVariant, type ChatTurn } from '@/db'
+import ModePicker from '@/ui/ModePicker'
 import SessionDrawer from '@/ui/SessionDrawer'
 import {
   ChevronDownIcon,
@@ -693,16 +694,7 @@ export default function App() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-4 py-3">
-        {turns.length === 0 && (
-          <div className="mt-16 text-center">
-            <h1 className="text-lg font-medium">Chat Lite</h1>
-            <p className="mt-2 text-xs leading-relaxed text-neutral-400">
-              纯聊天，无代理无中转
-              <br />
-              在设置里选服务商、填 Key 即可开始
-            </p>
-          </div>
-        )}
+        {turns.length === 0 && <ModePicker />}
 
         {turns.map((turn) => {
           const variant = activeVariant(turn)

@@ -1,57 +1,12 @@
-import { useRef, useState } from 'react'
-import { extractCardFromPng, normalizeCard, type CharacterCard } from '@/chat/characters'
+import { useState } from 'react'
 import { useApp } from '@/chat/store'
 import { PlusIcon } from './icons'
-
-const readAsDataUrl = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(new Error('读取图片失败'))
-    reader.readAsDataURL(file)
-  })
-
-async function parseFile(file: File): Promise<CharacterCard> {
-  const lower = file.name.toLowerCase()
-  if (lower.endsWith('.png')) {
-    const raw = extractCardFromPng(await file.arrayBuffer())
-    if (!raw) throw new Error('这张 PNG 里没有角色卡数据')
-    const card = normalizeCard(raw)
-    try {
-      card.avatar = await readAsDataUrl(file)
-    } catch {
-      /* 头像失败不影响导入 */
-    }
-    return card
-  }
-  if (lower.endsWith('.json')) {
-    return normalizeCard(JSON.parse(await file.text()))
-  }
-  throw new Error('只支持 .png 或 .json 角色卡')
-}
+import { useImportCharacter } from './useImportCharacter'
 
 export default function CharacterList() {
-  const { characters, importCharacter, removeCharacter, startWithCharacter } = useApp()
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const { characters, removeCharacter, startWithCharacter } = useApp()
+  const { importFiles, busy, error, fileRef } = useImportCharacter()
   const [pending, setPending] = useState<string | null>(null)
-
-  const onPick = async (files: FileList | null) => {
-    if (!files?.length) return
-    setBusy(true)
-    setError(null)
-    try {
-      for (const file of Array.from(files)) {
-        importCharacter(await parseFile(file))
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-      if (fileRef.current) fileRef.current.value = ''
-    }
-  }
 
   return (
     <div className="flex h-full flex-col">
@@ -73,7 +28,7 @@ export default function CharacterList() {
           accept=".png,.json,application/json,image/png"
           multiple
           className="hidden"
-          onChange={(e) => void onPick(e.target.files)}
+          onChange={(e) => void importFiles(e.target.files)}
         />
       </div>
 
@@ -85,7 +40,7 @@ export default function CharacterList() {
             <p className="text-xs leading-relaxed text-neutral-400">
               角色卡是酒馆生态的通行证
               <br />
-              从 SillyTavern 社区下载的 PNG 卡可以直接拖进来
+              从社区下载的 PNG 卡可以直接导入
             </p>
           </div>
         )}
@@ -95,11 +50,11 @@ export default function CharacterList() {
             <div key={card.id} className="relative">
               <button
                 className="flex w-full flex-col items-center gap-1"
+                disabled={Boolean(pending)}
                 onClick={() => {
                   setPending(card.id)
                   void startWithCharacter(card.id)
                 }}
-                disabled={Boolean(pending)}
               >
                 {card.avatar ? (
                   <img
