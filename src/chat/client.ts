@@ -12,6 +12,8 @@ export interface ChatConfig {
   protocol: ProtocolSetting
   /** 模型上下文长度，来自 /models，用于超限提醒 */
   contextLimit?: number
+  /** 全局提示词包（会话可覆盖） */
+  packId?: string
 }
 
 export interface WireTurn {

@@ -5,6 +5,7 @@ import type { ChatConfig } from '@/chat/client'
 import { humanizeError } from '@/chat/errors'
 import { fetchModels, loadCachedModels, type ModelInfo } from '@/chat/models'
 import { resolveProtocol, type ProtocolSetting } from '@/chat/protocol'
+import { BUILTIN_PACKS, findPack } from '@/chat/packs'
 import { findProvider, PROVIDER_GROUPS, PROVIDERS, PROVIDER_LABEL_CUSTOM, type Provider } from '@/chat/providers'
 import {
   estimateTokens,
@@ -213,7 +214,7 @@ function ModelPicker({
 }
 
 function SettingsSheet() {
-  const { config, saveConfig, settingsOpen, setSettings } = useApp()
+  const { config, saveConfig, settingsOpen, setSettings, setPack } = useApp()
   const [draft, setDraft] = useState<ChatConfig>(config)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [loading, setLoading] = useState(false)
@@ -340,6 +341,27 @@ function SettingsSheet() {
           ))}
         </div>
 
+        <label className="mb-1 block text-xs text-neutral-500">提示词包</label>
+        <div className="mb-1 flex gap-1.5">
+          {BUILTIN_PACKS.map((p) => (
+            <button
+              key={p.id}
+              className={`flex-1 rounded-lg border px-2 py-1 text-[11px] ${
+                (draft.packId ?? 'minimal') === p.id
+                  ? 'border-neutral-900 bg-neutral-900 text-white'
+                  : 'border-neutral-200 text-neutral-600'
+              }`}
+              onClick={() => {
+                setDraft({ ...draft, packId: p.id })
+                void setPack(p.id)
+              }}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+        <p className="mb-3 text-[10px] leading-relaxed text-neutral-400">{findPack(draft.packId).hint}</p>
+
         <div className="mb-1 flex items-center justify-between">
           <label className="block text-xs text-neutral-500">模型</label>
           {canListModels ? (
@@ -407,8 +429,11 @@ function SettingsSheet() {
 }
 
 function Composer({ meter }: { meter?: React.ReactNode }) {
-  const { draft, setDraft, send, streamingTurnId, stop } = useApp()
+  const { draft, setDraft, send, streamingTurnId, stop, sessions, currentId, config, setPack, applyAction } = useApp()
   const ref = useRef<HTMLTextAreaElement>(null)
+  const [packOpen, setPackOpen] = useState(false)
+
+  const pack = findPack(sessions.find((s) => s.id === currentId)?.packId ?? config.packId)
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -425,6 +450,49 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
   return (
     <div className="border-t border-neutral-100 bg-white px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-1.5">
       {meter}
+
+      <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
+        <button
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+            packOpen ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+          }`}
+          onClick={() => setPackOpen((v) => !v)}
+        >
+          {pack.name}
+        </button>
+        {pack.actions.map((action) => (
+          <button
+            key={action.id}
+            className="shrink-0 rounded-full border border-neutral-200 px-2 py-0.5 text-[11px] text-neutral-600 active:bg-neutral-100"
+            onClick={() => applyAction(action.template)}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+
+      {packOpen && (
+        <div className="mb-1.5 rounded-lg bg-neutral-50 p-2">
+          <div className="flex gap-1.5">
+            {BUILTIN_PACKS.map((p) => (
+              <button
+                key={p.id}
+                className={`flex-1 rounded-md py-1 text-[11px] ${
+                  p.id === pack.id ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600'
+                }`}
+                onClick={() => {
+                  void setPack(p.id)
+                  setPackOpen(false)
+                }}
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-400">{pack.hint}</p>
+        </div>
+      )}
+
       <div className="flex items-end gap-2 rounded-2xl border border-neutral-200 px-3 py-2">
         <textarea
           ref={ref}

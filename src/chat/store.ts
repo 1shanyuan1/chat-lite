@@ -10,6 +10,7 @@ import { getRepo } from '@/db/runtime'
 import { completeText, streamChat, type ChatConfig, type WireTurn } from './client'
 import { humanizeError } from './errors'
 import { findTurnHits } from './hit-nav'
+import { composeSystemPrompt, DEFAULT_PACK_ID, findPack, renderTemplate } from './packs'
 import { PROVIDERS } from './providers'
 import {
   emptyUsage,
@@ -30,6 +31,7 @@ const defaultConfig: ChatConfig = {
   model: PROVIDERS[0].model ?? '',
   systemPrompt: '',
   protocol: PROVIDERS[0].protocol,
+  packId: DEFAULT_PACK_ID,
 }
 
 function loadConfig(): ChatConfig {
@@ -82,6 +84,8 @@ interface AppState {
   setDraft: (text: string) => void
   setDrawer: (open: boolean) => void
   setSettings: (open: boolean) => void
+  setPack: (packId: string) => Promise<void>
+  applyAction: (template: string) => void
   openSearchHit: (sessionId: string, query: string) => Promise<void>
   setBrowseIndex: (index: number) => void
   exitBrowse: () => void
@@ -123,11 +127,12 @@ export const useApp = create<AppState>()((set, get) => {
     controller = new AbortController()
     lastPersist = 0
 
-    // 会话级提示词（压缩摘要等）+ 全局设置里的提示词，两段都要带
+    // 三段提示词叠起来：提示词包（写作/角色规范）→ 会话级（压缩摘要）→ 全局设置
     const session = get().sessions.find((s) => s.id === sessionId)
+    const pack = findPack(session?.packId ?? get().config.packId)
     const effectiveConfig: ChatConfig = {
       ...get().config,
-      systemPrompt: [session?.systemPrompt, get().config.systemPrompt].filter(Boolean).join('\n\n'),
+      systemPrompt: composeSystemPrompt(pack.systemPrompt, session?.systemPrompt, get().config.systemPrompt),
     }
 
     let answer = ''
@@ -233,6 +238,22 @@ export const useApp = create<AppState>()((set, get) => {
     setDrawer: (open) => set({ drawerOpen: open }),
     setSettings: (open) => set({ settingsOpen: open }),
 
+    /** 切换提示词包：写回全局默认，同时绑定到当前会话 */
+    async setPack(packId) {
+      const { config, currentId, sessions } = get()
+      localStorage.setItem(CONFIG_KEY, JSON.stringify({ ...config, packId }))
+      set({ config: { ...config, packId } })
+      if (currentId) {
+        await getRepo().setSessionPack(currentId, packId)
+        set({ sessions: sessions.map((s) => (s.id === currentId ? { ...s, packId } : s)) })
+      }
+    },
+
+    /** 点快捷动作：把模板渲染进输入框，用户还能改完再发 */
+    applyAction(template) {
+      set({ draft: renderTemplate(template, get().draft) })
+    },
+
     /** 从搜索结果进入会话：顺带进入命中浏览模式 */
     async openSearchHit(sessionId, query) {
       await get().selectSession(sessionId)
@@ -304,7 +325,7 @@ export const useApp = create<AppState>()((set, get) => {
       if (!sessionId) {
         const title = content.slice(0, 20) + (content.length > 20 ? '…' : '')
         // 全局 systemPrompt 不落库，每次生成时再合并，避免改设置后旧会话不生效
-        const session = await getRepo().createSession(title)
+        const session = await getRepo().createSession(title, undefined, get().config.packId)
         sessionId = session.id
         set({ currentId: session.id, sessions: await getRepo().listSessions() })
       }

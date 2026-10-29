@@ -32,6 +32,7 @@ const {
   readGeminiUsage,
 } = await import('@/chat/tokens')
 const { sessionToMarkdown, exportFilename } = await import('@/chat/export')
+const { BUILTIN_PACKS, DEFAULT_PACK_ID, findPack, renderTemplate, composeSystemPrompt } = await import('@/chat/packs')
 
 let passed = 0
 let failed = 0
@@ -223,6 +224,35 @@ await repo.deleteSession(trip.id)
 ok((await repo.listSessions()).length === 1, '会话删除后列表减少')
 ok((await repo.listTurns(trip.id)).length === 0, '级联删除该会话的轮次')
 ok((await repo.search('公园')).length === 0, '被删会话不再出现在搜索里')
+
+/* ---------------- 提示词包 ---------------- */
+section('提示词包')
+
+ok(BUILTIN_PACKS.length === 3, `内置三套包（${BUILTIN_PACKS.length}）`)
+ok(new Set(BUILTIN_PACKS.map((p) => p.id)).size === 3, '包 id 不重复')
+ok(BUILTIN_PACKS.every((p) => p.name && p.hint), '每套包都有名称与说明')
+ok(findPack(DEFAULT_PACK_ID).id === 'minimal', '默认落到极简包')
+ok(findPack('writing').name === '写作', '按 id 取包')
+ok(findPack('不存在').id === 'minimal', '未知 id 回退到极简')
+ok(findPack(undefined).id === 'minimal', '未设置时回退到极简')
+
+const writing = findPack('writing')
+ok(writing.systemPrompt.length > 20, '写作包带系统提示词')
+ok(writing.actions.length >= 4, `写作包 ${writing.actions.length} 个快捷动作`)
+ok(writing.actions.every((a) => a.id && a.label && a.template.includes('{{input}}')), '每个动作都有 id/标签且含 {{input}} 占位')
+ok(findPack('minimal').actions.length === 0, '极简包没有动作，不占界面')
+
+ok(renderTemplate('润色这段：\n{{input}}', '原文') === '润色这段：\n原文', '占位符被输入替换')
+ok(renderTemplate('{{input}} 和 {{input}}', 'A') === 'A 和 A', '多处占位符全部替换')
+ok(renderTemplate('直接给结论', '') === '直接给结论', '空输入时只留指令，不留空行')
+ok(renderTemplate('直接给结论', '内容') === '直接给结论\n\n内容', '无占位符时把输入接在后面')
+ok(renderTemplate('润色：{{input}}', '  前后有空格  ') === '润色：前后有空格', '输入两端空白被裁掉')
+
+ok(composeSystemPrompt('包规范', '摘要', '用户设定') === '包规范\n\n摘要\n\n用户设定', '三段提示词按 包 → 会话 → 用户 顺序拼接')
+ok(composeSystemPrompt('包规范') === '包规范', '只有包提示词时不加空行')
+ok(composeSystemPrompt('', '摘要', '') === '摘要', '空段被跳过')
+ok(composeSystemPrompt('', '', '') === '', '全空得到空串')
+ok(composeSystemPrompt('包', '   ', '用户') === '包\n\n用户', '纯空白段被跳过')
 
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))

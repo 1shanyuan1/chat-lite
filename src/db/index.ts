@@ -8,6 +8,8 @@ export interface Session {
   updatedAt: number
   /** 会话级系统提示词（压缩接续时会把摘要写进这里） */
   systemPrompt?: string
+  /** 绑定的提示词包，缺省时用全局设置 */
+  packId?: string
 }
 
 export interface TurnUser {
@@ -49,8 +51,9 @@ export interface SearchHit {
 
 export interface Repo {
   listSessions(): Promise<Session[]>
-  createSession(title: string, systemPrompt?: string): Promise<Session>
+  createSession(title: string, systemPrompt?: string, packId?: string): Promise<Session>
   renameSession(id: string, title: string): Promise<void>
+  setSessionPack(id: string, packId: string): Promise<void>
   deleteSession(id: string): Promise<void>
   listTurns(sessionId: string): Promise<ChatTurn[]>
   appendTurn(turn: ChatTurn): Promise<void>
@@ -103,10 +106,16 @@ export function createLocalRepo(): Repo {
     async listSessions() {
       return readJson<Session[]>(SESSIONS, []).sort((a, b) => b.updatedAt - a.updatedAt)
     },
-    async createSession(title, systemPrompt) {
-      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt }
+    async createSession(title, systemPrompt, packId) {
+      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId }
       writeJson(SESSIONS, [session, ...readJson<Session[]>(SESSIONS, [])])
       return session
+    },
+    async setSessionPack(id, packId) {
+      writeJson(
+        SESSIONS,
+        readJson<Session[]>(SESSIONS, []).map((s) => (s.id === id ? { ...s, packId } : s))
+      )
     },
     async renameSession(id, title) {
       writeJson(
@@ -182,7 +191,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY NOT NULL,
   title TEXT NOT NULL,
   updated_at INTEGER NOT NULL,
-  system_prompt TEXT
+  system_prompt TEXT,
+  pack_id TEXT
 );
 CREATE TABLE IF NOT EXISTS turns (
   id TEXT PRIMARY KEY NOT NULL,
@@ -207,6 +217,7 @@ export async function createSqliteRepo(): Promise<Repo> {
   // 老库补列（幂等）
   await db.execute("ALTER TABLE turns ADD COLUMN user_text TEXT NOT NULL DEFAULT ''").catch(() => undefined)
   await db.execute("ALTER TABLE turns ADD COLUMN assistant_text TEXT NOT NULL DEFAULT ''").catch(() => undefined)
+  await db.execute('ALTER TABLE sessions ADD COLUMN pack_id TEXT').catch(() => undefined)
 
   const rowToTurn = (row: Record<string, unknown>): ChatTurn => ({
     id: String(row.id),
@@ -219,23 +230,30 @@ export async function createSqliteRepo(): Promise<Repo> {
 
   return {
     async listSessions() {
-      const res = await db.query('SELECT id, title, updated_at, system_prompt FROM sessions ORDER BY updated_at DESC')
+      const res = await db.query(
+        'SELECT id, title, updated_at, system_prompt, pack_id FROM sessions ORDER BY updated_at DESC'
+      )
       return (res.values ?? []).map((row: Record<string, unknown>) => ({
         id: String(row.id),
         title: String(row.title),
         updatedAt: Number(row.updated_at),
         systemPrompt: row.system_prompt == null ? undefined : String(row.system_prompt),
+        packId: row.pack_id == null ? undefined : String(row.pack_id),
       }))
     },
-    async createSession(title, systemPrompt) {
-      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt }
-      await db.run('INSERT INTO sessions (id, title, updated_at, system_prompt) VALUES (?, ?, ?, ?)', [
+    async createSession(title, systemPrompt, packId) {
+      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId }
+      await db.run('INSERT INTO sessions (id, title, updated_at, system_prompt, pack_id) VALUES (?, ?, ?, ?, ?)', [
         session.id,
         session.title,
         session.updatedAt,
         session.systemPrompt ?? null,
+        session.packId ?? null,
       ])
       return session
+    },
+    async setSessionPack(id, packId) {
+      await db.run('UPDATE sessions SET pack_id = ? WHERE id = ?', [packId, id])
     },
     async renameSession(id, title) {
       await db.run('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?', [title, Date.now(), id])
