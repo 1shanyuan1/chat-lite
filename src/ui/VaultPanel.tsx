@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { buildBundle, bundleFileName, collectBundleItems } from '@/chat/bundle-export'
+import { buildCharx, charxFileName } from '@/chat/charx-export'
 import { FOLDER_CONTENTS, type FolderArea } from '@/chat/folders'
 import { humanizeError } from '@/chat/errors'
 import { platform } from '@/platform'
@@ -555,6 +556,23 @@ export default function VaultPanel() {
               />
             </div>
           ))}
+
+          {editing.kind === 'character' && (
+            <button
+              className="mt-2 w-full rounded-xl border border-neutral-200 py-2.5 text-sm text-neutral-700"
+              onClick={async () => {
+                try {
+                  // 先存一次，保证导出的是眼前这份
+                  importSetting(editing)
+                  await platform().exportBinaryFile(charxFileName(editing.name), buildCharx(editing), 'application/zip')
+                } catch (e) {
+                  alert(humanizeError(e))
+                }
+              }}
+            >
+              导出为 CHARX（含头像，可发给别人）
+            </button>
+          )}
 
           <button
             className="mt-2 w-full rounded-xl bg-neutral-900 py-2.5 text-sm text-white"

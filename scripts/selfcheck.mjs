@@ -732,6 +732,54 @@ ok(dupItems[0].file !== dupItems[1].file, '同名条目不会互相覆盖')
 ok(bundleFileName('星海宇宙').endsWith('.chatlite.zip'), '导出文件名带 .chatlite.zip 后缀')
 ok(!/[\\/:*?"<>|]/.test(bundleFileName('a/b:c*d')), '文件夹名里的非法字符被替换')
 
+/* ---------------- CHARX 导出 ---------------- */
+section('导出 CHARX')
+
+const { buildCharx, charxFileName, dataUrlToBytes } = await import('@/chat/charx-export')
+
+const pngForCard = tinyPng()
+const avatarDataUrl = `data:image/png;base64,${Buffer.from(pngForCard).toString('base64')}`
+const charxDoc = { ...fromCard, id: 'cx1', avatar: avatarDataUrl }
+
+const charxBytes = buildCharx(charxDoc)
+const charxRead = readBundle(charxBytes.buffer.slice(charxBytes.byteOffset, charxBytes.byteOffset + charxBytes.byteLength))
+
+ok(charxRead.length === 2, `CHARX 里有 card.json 与头像（实际 ${charxRead.length} 个文件）`)
+const charxCardFile = charxRead.find((e) => e.path === 'card.json')
+ok(Boolean(charxCardFile), 'card.json 在根目录')
+ok(charxRead.some((e) => e.path === 'assets/icon/images/avatar.png'), '头像按规范放在 assets/icon/images/')
+
+const charxJson = JSON.parse(entryTextOf(charxCardFile))
+ok(charxJson.spec === 'chara_card_v3' && charxJson.spec_version === '3.0', '卡是 V3 规范')
+ok(charxJson.data.assets?.[0]?.type === 'icon', 'assets 里声明了主图标')
+ok(
+  charxJson.data.assets?.[0]?.uri === 'embeded://assets/icon/images/avatar.png',
+  '图标用 embeded:// 引用（规范只有一个 d）'
+)
+ok(charxJson.data.name === fromCard.name, '名字写进了卡')
+ok(charxJson.data.first_mes === (fromCard.firstMessage ?? ''), '开场白写进了卡')
+ok(charxJson.data.character_book.entries.length === fromCard.entries.length, '条目一起打包')
+
+// 用自家解析器读回来，确认不是只写了个空壳
+const backFromCharx = normalizeCard(charxJson)
+ok(backFromCharx.name === fromCard.name, '导出的 CHARX 能被自己读回名字')
+ok(backFromCharx.worldInfo.length === fromCard.entries.length, '导出的 CHARX 能读回条目')
+ok(resolveEmbededUri(pickIconAsset(charxJson), charxRead)?.path === 'assets/icon/images/avatar.png', '头像能按 URI 找回')
+
+// 没有头像时也不该崩
+const noAvatarCharx = buildCharx({ ...fromCard, id: 'cx2', avatar: undefined })
+const noAvatarRead = readBundle(noAvatarCharx.buffer.slice(noAvatarCharx.byteOffset, noAvatarCharx.byteOffset + noAvatarCharx.byteLength))
+ok(noAvatarRead.length === 1, '没头像时只打包 card.json')
+ok(JSON.parse(entryTextOf(noAvatarRead[0])).data.assets.length === 0, 'assets 为空数组而不是 null')
+
+ok(dataUrlToBytes(undefined) === undefined, '没有头像返回 undefined')
+ok(dataUrlToBytes('https://example.com/a.png') === undefined, '非 data URL 返回 undefined')
+ok(dataUrlToBytes('data:image/png;base64,@@@') === undefined, '坏数据不抛错')
+ok(dataUrlToBytes(avatarDataUrl)?.ext === 'png', '解析出图片后缀')
+
+ok(charxFileName('林深').endsWith('.charx'), '导出文件名带 .charx')
+ok(!/[\\/:*?"<>|]/.test(charxFileName('a/b:c')), '文件名过滤非法字符')
+
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))
 console.log(`通过 ${passed} 项，失败 ${failed} 项`)
