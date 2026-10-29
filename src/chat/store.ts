@@ -11,6 +11,8 @@ import { completeText, streamChat, type ChatConfig, type WireTurn } from './clie
 import { humanizeError } from './errors'
 import { collectEntries, pickGreeting, renderSettings, type SettingDoc } from './settings'
 import { deleteSetting, migrateLegacySettings, saveSetting } from '@/db/settings'
+import type { FolderArea, VaultFolder } from './folders'
+import * as folderStore from '@/db/folders'
 import { findTurnHits } from './hit-nav'
 import { presetOverrides, type PresetItem, type PromptItem } from './vault'
 import { deletePreset, deletePrompt, listPresets, listPrompts, savePreset, savePrompt } from '@/db/vault'
@@ -90,6 +92,10 @@ interface AppState {
   settings: SettingDoc[]
   presets: PresetItem[]
   prompts: PromptItem[]
+  folders: VaultFolder[]
+  createFolder: (area: FolderArea, name: string) => void
+  renameFolder: (id: string, name: string) => void
+  removeFolder: (id: string) => void
   models: ModelInfo[]
   modelsLoading: boolean
   modelsError: string | null
@@ -266,12 +272,14 @@ export const useApp = create<AppState>()((set, get) => {
     settings: [],
     presets: [],
     prompts: [],
+    folders: [],
     models: [],
     modelsLoading: false,
     modelsError: null,
 
     async init() {
       set({
+        folders: folderStore.listFolders(),
         settings: migrateLegacySettings(),
         presets: listPresets(),
         prompts: listPrompts(),
@@ -300,6 +308,26 @@ export const useApp = create<AppState>()((set, get) => {
 
     setDrawer: (open) => set({ drawerOpen: open }),
     setSettings: (open) => set({ settingsOpen: open }),
+
+    createFolder(area, name) {
+      set({ folders: folderStore.createFolder(area, name) })
+    },
+
+    renameFolder(id, name) {
+      set({ folders: folderStore.renameFolder(id, name) })
+    },
+
+    removeFolder(id) {
+      // 删文件夹不删内容，只把它们退回未分类
+      const settingsNext = get().settings.map((d) => (d.folderId === id ? { ...d, folderId: undefined } : d))
+      for (const doc of settingsNext) saveSetting(doc)
+      set({
+        folders: folderStore.deleteFolder(id),
+        settings: settingsNext,
+        presets: get().presets.map((p) => (p.folderId === id ? { ...p, folderId: undefined } : p)),
+      })
+      for (const preset of get().presets) if (!preset.folderId) savePreset(preset)
+    },
 
     /** 拉模型列表：先吃缓存，force 时强制重拉 */
     async loadModels(force = false) {

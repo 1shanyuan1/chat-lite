@@ -19,6 +19,8 @@ export type DocKind = 'character' | 'world' | 'setting'
 export interface SettingDoc {
   id: string
   kind: DocKind
+  /** 所属文件夹，空表示未分类 */
+  folderId?: string
   name: string
   body: string
   entries: SettingEntry[]

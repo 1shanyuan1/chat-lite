@@ -671,6 +671,17 @@ const kinds = mixed
   .map((e) => detectKind(JSON.parse(entryTextOf(e))))
 ok(kinds.includes('world') && kinds.includes('character'), `按内容分别识别为 ${kinds.join(' / ')}`)
 
+/* ---------------- 文件夹分区 ---------------- */
+section('寄存器文件夹')
+
+const { FOLDER_CONTENTS, areaOfKind } = await import('@/chat/folders')
+ok(FOLDER_CONTENTS.tavern.length === 3, '酒馆文件夹可放三类：角色卡/世界书/预设')
+ok(FOLDER_CONTENTS.tavern.map((i) => i.kind).join(',') === 'character,world,preset', '酒馆的类型顺序正确')
+ok(FOLDER_CONTENTS.writing.map((i) => i.kind).join(',') === 'setting,preset', '写作文件夹只放设定与预设')
+ok(!FOLDER_CONTENTS.writing.some((i) => i.kind === 'character'), '写作区不会出现角色卡')
+ok(areaOfKind('character') === 'tavern' && areaOfKind('world') === 'tavern', '角色卡与世界书归酒馆')
+ok(areaOfKind('setting') === 'writing', '设定归写作')
+
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))
 console.log(`通过 ${passed} 项，失败 ${failed} 项`)

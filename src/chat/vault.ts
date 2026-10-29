@@ -20,6 +20,8 @@ export interface WorldItem {
 /** SillyTavern Chat Completion 预设里我们真正会用的字段 */
 export interface PresetItem {
   id: string
+  /** 所属文件夹，空表示未分类 */
+  folderId?: string
   name: string
   /** 温度已不再支持：多数服务商不推荐调整，避免误导 */
   topP?: number

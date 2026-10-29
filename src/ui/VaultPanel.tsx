@@ -1,16 +1,18 @@
 import { useState } from 'react'
+import { FOLDER_CONTENTS, type FolderArea } from '@/chat/folders'
 import { emptySetting, type DocKind, type SettingDoc } from '@/chat/settings'
 import { useApp } from '@/chat/store'
 import type { PresetItem, PromptItem } from '@/chat/vault'
-import { PlusIcon } from './icons'
+import { ChevronLeftIcon, PlusIcon } from './icons'
 import { useImportFiles } from './useImportFiles'
 
-type Area = 'tavern' | 'writing' | 'common'
+type Area = FolderArea | 'common'
+type NewKind = DocKind | 'preset'
 
 const AREAS: Array<{ id: Area; label: string; hint: string }> = [
-  { id: 'tavern', label: '酒馆', hint: '角色卡与世界书，保持社区格式，可与 SillyTavern 互导' },
-  { id: 'writing', label: '写作', hint: '设定文件，自由写法，不要求任何格式' },
-  { id: 'common', label: '通用', hint: '预设与提示词，两种模式都能用' },
+  { id: 'tavern', label: '酒馆', hint: '角色卡、世界书、预设，按文件夹整理' },
+  { id: 'writing', label: '写作', hint: '自由设定与预设，按文件夹整理' },
+  { id: 'common', label: '通用', hint: '未归入文件夹的预设与提示词' },
 ]
 
 const field = 'w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400'
@@ -67,11 +69,34 @@ function DocRow({ doc, onEdit, onDelete, onStart }: { doc: SettingDoc; onEdit: (
   )
 }
 
+function PresetRow({ item, onEdit, onDelete, onApply }: { item: PresetItem; onEdit: () => void; onDelete: () => void; onApply: () => void }) {
+  const meta =
+    [item.topP !== undefined ? `top_p ${item.topP}` : '', item.maxTokens ? `长度 ${item.maxTokens}` : '']
+      .filter(Boolean)
+      .join(' · ') || '未设置参数'
+
+  return (
+    <div className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
+      <button className="min-w-0 flex-1 text-left" onClick={onEdit}>
+        <span className="block truncate text-sm text-neutral-800">{item.name}</span>
+        <span className="block text-[10px] text-neutral-400">{meta}</span>
+      </button>
+      <button className="shrink-0 rounded-md bg-neutral-900 px-2 py-0.5 text-[10px] text-white" onClick={onApply}>
+        应用
+      </button>
+      <button className="shrink-0 text-[11px] text-neutral-300 active:text-red-500" onClick={onDelete}>
+        删除
+      </button>
+    </div>
+  )
+}
+
 export default function VaultPanel() {
   const {
     settings,
     presets,
     prompts,
+    folders,
     importSetting,
     removeSetting,
     startWithSettings,
@@ -81,165 +106,248 @@ export default function VaultPanel() {
     removePrompt,
     applyPreset,
     applyPrompt,
+    createFolder,
+    renameFolder,
+    removeFolder,
   } = useApp()
   const { importFiles, busy, error, fileRef } = useImportFiles()
 
   const [area, setArea] = useState<Area>('tavern')
+  const [folderId, setFolderId] = useState<string | null>(null)
   const [editing, setEditing] = useState<SettingDoc | null>(null)
   const [editingPreset, setEditingPreset] = useState<PresetItem | null>(null)
   const [editingPrompt, setEditingPrompt] = useState<PromptItem | null>(null)
+  const [menu, setMenu] = useState<'new' | 'folder' | null>(null)
+  const [folderDraft, setFolderDraft] = useState('')
 
-  const characters = settings.filter((d) => d.kind === 'character')
-  const worlds = settings.filter((d) => d.kind === 'world')
-  const docs = settings.filter((d) => d.kind === 'setting')
+  const currentFolder = folders.find((f) => f.id === folderId)
+  const areaFolders = folders.filter((f) => f.area === area)
+  const allowed = area === 'common' ? [] : FOLDER_CONTENTS[area]
 
-  const newDoc = (kind: DocKind) => {
+  const docsOf = (kind: DocKind) =>
+    settings.filter((d) => d.kind === kind && (folderId ? d.folderId === folderId : !d.folderId))
+  const presetsOf = () => presets.filter((p) => (folderId ? p.folderId === folderId : !p.folderId))
+  const countInFolder = (id: string) =>
+    settings.filter((d) => d.folderId === id).length + presets.filter((p) => p.folderId === id).length
+
+  const createNew = (kind: NewKind) => {
+    setMenu(null)
+    if (kind === 'preset') {
+      setEditingPreset({
+        id: crypto.randomUUID(),
+        folderId: folderId ?? undefined,
+        name: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+      return
+    }
     const doc = emptySetting(kind)
+    doc.folderId = folderId ?? undefined
     doc.name = kind === 'character' ? '新角色' : kind === 'world' ? '新世界书' : '新设定'
     setEditing(doc)
+  }
+
+  const onImport = async (files: FileList | null) => {
+    const ids = await importFiles(files)
+    if (!folderId || ids.length === 0) return
+    // 在文件夹里导入的内容直接归到这个文件夹
+    for (const id of ids) {
+      const doc = useApp.getState().settings.find((d) => d.id === id)
+      if (doc && doc.folderId !== folderId) importSetting({ ...doc, folderId })
+    }
+  }
+
+  const renderDocs = (withEmpty = false) =>
+    allowed.map(({ kind, label }) => {
+      if (kind === 'preset') return null
+      const list = docsOf(kind as DocKind)
+      if (!withEmpty && list.length === 0) return null
+      return (
+        <div key={kind}>
+          <div className="bg-neutral-50 px-4 py-1 text-[10px] text-neutral-500">
+            {label} · {list.length}
+          </div>
+          {list.length === 0 && <p className="px-4 py-3 text-center text-[10px] text-neutral-300">空</p>}
+          {list.map((doc) => (
+            <DocRow
+              key={doc.id}
+              doc={doc}
+              onEdit={() => setEditing(doc)}
+              onDelete={() => removeSetting(doc.id)}
+              onStart={() => void startWithSettings([doc.id])}
+            />
+          ))}
+        </div>
+      )
+    })
+
+  const presetSection = (withEmpty = false) => {
+    const list = presetsOf()
+    if (!withEmpty && list.length === 0) return null
+    return (
+      <div>
+        <div className="bg-neutral-50 px-4 py-1 text-[10px] text-neutral-500">预设 · {list.length}</div>
+        {list.length === 0 && <p className="px-4 py-3 text-center text-[10px] text-neutral-300">空</p>}
+        {list.map((item) => (
+          <PresetRow
+            key={item.id}
+            item={item}
+            onEdit={() => setEditingPreset(item)}
+            onDelete={() => removePreset(item.id)}
+            onApply={() => applyPreset(item)}
+          />
+        ))}
+      </div>
+    )
+  }
+
+  const emptyArea =
+    !currentFolder &&
+    area !== 'common' &&
+    areaFolders.length === 0 &&
+    docsOf('character').length === 0 &&
+    docsOf('world').length === 0 &&
+    docsOf('setting').length === 0 &&
+    previewsEmpty()
+
+  function previewsEmpty() {
+    return presets.filter((p) => !p.folderId).length === 0
   }
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-4 pb-2 pt-1">
-        <div className="flex gap-1">
-          {AREAS.map((a) => (
+        {currentFolder ? (
+          <button className="flex min-w-0 items-center gap-1 text-sm text-neutral-700" onClick={() => setFolderId(null)}>
+            <ChevronLeftIcon />
+            <span className="truncate">{currentFolder.name}</span>
+          </button>
+        ) : (
+          <div className="flex gap-1">
+            {AREAS.map((a) => (
+              <button
+                key={a.id}
+                className={`rounded-full px-2 py-0.5 text-[11px] ${
+                  area === a.id ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                }`}
+                onClick={() => {
+                  setArea(a.id)
+                  setFolderId(null)
+                }}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {currentFolder ? (
+          <button className="rounded-lg bg-neutral-900 px-2 py-1 text-[11px] text-white" onClick={() => setMenu('new')}>
+            新建
+          </button>
+        ) : (
+          <div className="flex gap-1.5">
+            {area !== 'common' && (
+              <button
+                className="flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-600"
+                onClick={() => setMenu('folder')}
+              >
+                <PlusIcon size={12} />
+                文件夹
+              </button>
+            )}
             <button
-              key={a.id}
-              className={`rounded-full px-2 py-0.5 text-[11px] ${
-                area === a.id ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
-              }`}
-              onClick={() => setArea(a.id)}
+              className="flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-600"
+              disabled={busy}
+              onClick={() => fileRef.current?.click()}
             >
-              {a.label}
+              <PlusIcon size={12} />
+              {busy ? '…' : '导入'}
             </button>
-          ))}
-        </div>
-        <button
-          className="flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-600"
-          disabled={busy}
-          onClick={() => fileRef.current?.click()}
-        >
-          <PlusIcon size={13} />
-          {busy ? '…' : '导入'}
-        </button>
+          </div>
+        )}
+
         <input
           ref={fileRef}
           type="file"
           accept=".png,.json,.txt,.charx,.zip,application/json,image/png,text/plain,application/zip"
           multiple
           className="hidden"
-          onChange={(e) => void importFiles(e.target.files)}
+          onChange={(e) => void onImport(e.target.files)}
         />
       </div>
 
-      <p className="px-4 pb-2 text-[10px] text-neutral-400">{AREAS.find((a) => a.id === area)?.hint}</p>
+      <p className="px-4 pb-2 text-[10px] text-neutral-400">
+        {currentFolder
+          ? `${currentFolder.name} · ${countInFolder(currentFolder.id)} 项`
+          : (AREAS.find((a) => a.id === area)?.hint ?? '')}
+      </p>
       {error && <p className="px-4 pb-2 text-[11px] text-red-500">{error}</p>}
 
       <div className="flex-1 overflow-y-auto">
-        {area === 'tavern' && (
+        {!currentFolder && area !== 'common' && (
           <>
-            <div className="flex items-center justify-between bg-neutral-50 px-4 py-1">
-              <span className="text-[10px] text-neutral-500">角色卡 · {characters.length}</span>
-              <button className="text-[10px] text-blue-600" onClick={() => newDoc('character')}>
-                新建
-              </button>
-            </div>
-            {characters.length === 0 && (
-              <p className="px-4 py-4 text-center text-[11px] text-neutral-400">导入 SillyTavern 的 PNG 角色卡</p>
-            )}
-            {characters.map((doc) => (
-              <DocRow
-                key={doc.id}
-                doc={doc}
-                onEdit={() => setEditing(doc)}
-                onDelete={() => removeSetting(doc.id)}
-                onStart={() => void startWithSettings([doc.id])}
-              />
-            ))}
-
-            <div className="mt-1 flex items-center justify-between bg-neutral-50 px-4 py-1">
-              <span className="text-[10px] text-neutral-500">世界书 · {worlds.length}</span>
-              <button className="text-[10px] text-blue-600" onClick={() => newDoc('world')}>
-                新建
-              </button>
-            </div>
-            {worlds.length === 0 && (
-              <p className="px-4 py-4 text-center text-[11px] text-neutral-400">导入世界书 JSON，或手动新建条目</p>
-            )}
-            {worlds.map((doc) => (
-              <DocRow
-                key={doc.id}
-                doc={doc}
-                onEdit={() => setEditing(doc)}
-                onDelete={() => removeSetting(doc.id)}
-                onStart={() => void startWithSettings([doc.id])}
-              />
-            ))}
-          </>
-        )}
-
-        {area === 'writing' && (
-          <>
-            <div className="flex items-center justify-between bg-neutral-50 px-4 py-1">
-              <span className="text-[10px] text-neutral-500">设定 · {docs.length}</span>
-              <button className="text-[10px] text-blue-600" onClick={() => newDoc('setting')}>
-                新建
-              </button>
-            </div>
-            {docs.length === 0 && (
-              <p className="px-4 py-6 text-center text-[11px] leading-relaxed text-neutral-400">
-                设定是自由格式：人物、世界观、文风都可以写
-                <br />
-                一个会话可以挂多份
-              </p>
-            )}
-            {docs.map((doc) => (
-              <DocRow
-                key={doc.id}
-                doc={doc}
-                onEdit={() => setEditing(doc)}
-                onDelete={() => removeSetting(doc.id)}
-                onStart={() => void startWithSettings([doc.id])}
-              />
-            ))}
-          </>
-        )}
-
-        {area === 'common' && (
-          <>
-            <div className="flex items-center justify-between bg-neutral-50 px-4 py-1">
-              <span className="text-[10px] text-neutral-500">预设 · {presets.length}</span>
-              <button
-                className="text-[10px] text-blue-600"
-                onClick={() =>
-                  setEditingPreset({ id: crypto.randomUUID(), name: '', createdAt: Date.now(), updatedAt: Date.now() })
-                }
-              >
-                新建
-              </button>
-            </div>
-            {presets.length === 0 && <p className="px-4 py-4 text-center text-[11px] text-neutral-400">导入预设 JSON</p>}
-            {presets.map((item) => (
-              <div key={item.id} className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
-                <button className="min-w-0 flex-1 text-left" onClick={() => setEditingPreset(item)}>
-                  <div className="truncate text-sm text-neutral-800">{item.name}</div>
-                  <div className="truncate text-[10px] text-neutral-400">
-                    {[item.topP !== undefined ? `top_p ${item.topP}` : '', item.maxTokens ? `长度 ${item.maxTokens}` : '']
-                      .filter(Boolean)
-                      .join(' · ') || '未设置参数'}
-                  </div>
+            {areaFolders.map((folder) => (
+              <div key={folder.id} className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
+                <button className="min-w-0 flex-1 text-left" onClick={() => setFolderId(folder.id)}>
+                  <span className="block truncate text-sm text-neutral-800">{folder.name}</span>
+                  <span className="block text-[10px] text-neutral-400">{countInFolder(folder.id)} 项</span>
                 </button>
                 <button
-                  className="shrink-0 rounded-md bg-neutral-900 px-2 py-0.5 text-[10px] text-white"
-                  onClick={() => applyPreset(item)}
+                  className="shrink-0 text-[11px] text-neutral-300"
+                  onClick={() => {
+                    const name = prompt('文件夹名称', folder.name)
+                    if (name !== null) renameFolder(folder.id, name)
+                  }}
                 >
-                  应用
+                  改名
                 </button>
-                <button className="shrink-0 text-[11px] text-neutral-300" onClick={() => removePreset(item.id)}>
+                <button className="shrink-0 text-[11px] text-neutral-300" onClick={() => removeFolder(folder.id)}>
                   删除
                 </button>
               </div>
+            ))}
+
+            {renderDocs()}
+            {presetSection()}
+
+            {emptyArea && (
+              <p className="px-4 py-8 text-center text-[11px] leading-relaxed text-neutral-400">
+                还没有内容
+                <br />
+                先建个文件夹，或直接导入
+              </p>
+            )}
+          </>
+        )}
+
+        {currentFolder && (
+          <>
+            {renderDocs(true)}
+            {presetSection(true)}
+          </>
+        )}
+
+        {area === 'common' && !currentFolder && (
+          <>
+            <div className="flex items-center justify-between bg-neutral-50 px-4 py-1">
+              <span className="text-[10px] text-neutral-500">预设 · {presetsOf().length}</span>
+              <button className="text-[10px] text-blue-600" onClick={() => createNew('preset')}>
+                新建
+              </button>
+            </div>
+            {presetsOf().length === 0 && (
+              <p className="px-4 py-4 text-center text-[11px] text-neutral-400">没有未归类的预设</p>
+            )}
+            {presetsOf().map((item) => (
+              <PresetRow
+                key={item.id}
+                item={item}
+                onEdit={() => setEditingPreset(item)}
+                onDelete={() => removePreset(item.id)}
+                onApply={() => applyPreset(item)}
+              />
             ))}
 
             <div className="mt-1 flex items-center justify-between bg-neutral-50 px-4 py-1">
@@ -262,8 +370,8 @@ export default function VaultPanel() {
             {prompts.map((item) => (
               <div key={item.id} className="flex items-center gap-2 border-b border-neutral-50 px-4 py-2.5">
                 <button className="min-w-0 flex-1 text-left" onClick={() => setEditingPrompt(item)}>
-                  <div className="truncate text-sm text-neutral-800">{item.name}</div>
-                  <div className="truncate text-[10px] text-neutral-400">{item.text.length} 字</div>
+                  <span className="block truncate text-sm text-neutral-800">{item.name}</span>
+                  <span className="block text-[10px] text-neutral-400">{item.text.length} 字</span>
                 </button>
                 <button
                   className="shrink-0 rounded-md bg-neutral-900 px-2 py-0.5 text-[10px] text-white"
@@ -279,6 +387,43 @@ export default function VaultPanel() {
           </>
         )}
       </div>
+
+      {menu === 'folder' && (
+        <Sheet title="新建文件夹" onClose={() => setMenu(null)}>
+          <input
+            autoFocus
+            className={`${field} mb-2`}
+            placeholder={area === 'tavern' ? '例如：星海宇宙' : '例如：长篇第一卷'}
+            value={folderDraft}
+            onChange={(e) => setFolderDraft(e.target.value)}
+          />
+          <p className="mb-3 text-[10px] text-neutral-400">可以往里放：{allowed.map((a) => a.label).join('、')}</p>
+          <button
+            className="w-full rounded-xl bg-neutral-900 py-2.5 text-sm text-white"
+            onClick={() => {
+              createFolder(area as FolderArea, folderDraft)
+              setFolderDraft('')
+              setMenu(null)
+            }}
+          >
+            创建
+          </button>
+        </Sheet>
+      )}
+
+      {menu === 'new' && currentFolder && (
+        <Sheet title={`在「${currentFolder.name}」里新建`} onClose={() => setMenu(null)}>
+          {FOLDER_CONTENTS[currentFolder.area].map((item) => (
+            <button
+              key={item.kind}
+              className="mb-1.5 w-full rounded-lg border border-neutral-200 px-3 py-2 text-left text-sm text-neutral-700"
+              onClick={() => createNew(item.kind)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </Sheet>
+      )}
 
       {editing && (
         <Sheet

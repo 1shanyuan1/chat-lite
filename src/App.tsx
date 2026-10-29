@@ -395,12 +395,6 @@ function SettingsSheet() {
           onChange={(e) => setDraft({ ...draft, userName: e.target.value })}
         />
 
-        <label className="mb-1 block text-xs text-neutral-500">系统提示词（可选）</label>
-        <textarea
-          className={`${field} mb-4 h-20 resize-none`}
-          value={draft.systemPrompt}
-          onChange={(e) => setDraft({ ...draft, systemPrompt: e.target.value })}
-        />
 
         <button
           className="w-full rounded-xl bg-neutral-900 py-3 text-sm text-white"
