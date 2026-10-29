@@ -31,10 +31,19 @@ const trimBase = (baseUrl: string) => baseUrl.replace(/\/+$/, '')
 export function buildChatRequest(
   protocol: Protocol,
   auth: AuthConfig,
-  options: { model: string; messages: WireMessage[]; system?: string; stream: boolean; includeUsage?: boolean }
+  options: {
+    model: string
+    messages: WireMessage[]
+    system?: string
+    stream: boolean
+    includeUsage?: boolean
+    temperature?: number
+    topP?: number
+    maxTokens?: number
+  }
 ): HttpRequest {
   const base = trimBase(auth.baseUrl)
-  const { model, messages, system, stream, includeUsage } = options
+  const { model, messages, system, stream, includeUsage, temperature, topP, maxTokens } = options
 
   if (protocol === 'anthropic') {
     return {
@@ -49,7 +58,9 @@ export function buildChatRequest(
       },
       body: JSON.stringify({
         model,
-        max_tokens: 8192,
+        max_tokens: maxTokens ?? 8192,
+        ...(temperature !== undefined ? { temperature } : {}),
+        ...(topP !== undefined ? { top_p: topP } : {}),
         ...(system ? { system } : {}),
         messages,
         stream,
@@ -68,6 +79,15 @@ export function buildChatRequest(
           parts: [{ text: m.content }],
         })),
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+        ...(temperature !== undefined || topP !== undefined || maxTokens !== undefined
+          ? {
+              generationConfig: {
+                ...(temperature !== undefined ? { temperature } : {}),
+                ...(topP !== undefined ? { topP } : {}),
+                ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
+              },
+            }
+          : {}),
       }),
     }
   }
@@ -84,6 +104,9 @@ export function buildChatRequest(
       model,
       messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages],
       stream,
+      ...(temperature !== undefined ? { temperature } : {}),
+      ...(topP !== undefined ? { top_p: topP } : {}),
+      ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
       // 只有 OpenAI 兼容协议支持这个字段，部分网关会因此报 400，上层有降级重试
       ...(stream && includeUsage ? { stream_options: { include_usage: true } } : {}),
     }),

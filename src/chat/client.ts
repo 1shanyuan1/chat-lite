@@ -16,6 +16,10 @@ export interface ChatConfig {
   packId?: string
   /** 用户在该角色眼中的称呼，用于替换 {{user}} */
   userName?: string
+  /** 采样参数，可由寄存区的预设覆盖 */
+  temperature?: number
+  topP?: number
+  maxTokens?: number
 }
 
 export interface WireTurn {
@@ -38,6 +42,9 @@ export async function* streamChat(
           model: config.model,
           messages: history,
           system: config.systemPrompt || undefined,
+          temperature: config.temperature,
+          topP: config.topP,
+          maxTokens: config.maxTokens,
           stream: true,
           // Gemini 与 Anthropic 原生协议自带 usage，不需要这个开关
           includeUsage: includeUsage && protocol === 'openai',

@@ -7,7 +7,7 @@ import { formatPercent, formatTokens, hitRate, isCacheEstimated, missTokens, sum
 import { activeVariant, type ChatTurn, type SearchHit, type Session } from '@/db'
 import { getRepo } from '@/db/runtime'
 import { platform } from '@/platform'
-import CharacterList from './CharacterList'
+import VaultPanel from './VaultPanel'
 import { CloseIcon, DownloadIcon, PlusIcon, SearchIcon } from './icons'
 
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -166,7 +166,7 @@ export default function SessionDrawer() {
             {(
               [
                 ['chats', '会话'],
-                ['chars', '角色'],
+                ['chars', '寄存区'],
               ] as Array<['chats' | 'chars', string]>
             ).map(([key, label]) => (
               <button
@@ -191,7 +191,7 @@ export default function SessionDrawer() {
           )}
         </div>
 
-        {tab === 'chars' && <CharacterList />}
+        {tab === 'chars' && <VaultPanel />}
 
         {tab === 'chats' && (
           <>

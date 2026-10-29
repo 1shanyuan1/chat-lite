@@ -12,6 +12,18 @@ import { humanizeError } from './errors'
 import { applyMacros, renderCard, type CharacterCard } from './characters'
 import { listCharacters, saveCharacter, deleteCharacter as removeCharacter } from '@/db/characters'
 import { findTurnHits } from './hit-nav'
+import type { PresetItem, PromptItem, VaultKind, WorldItem } from './vault'
+import {
+  deletePreset,
+  deletePrompt,
+  deleteWorld,
+  listPresets,
+  listPrompts,
+  listWorlds,
+  savePreset,
+  savePrompt,
+  saveWorld,
+} from '@/db/vault'
 import { contextWindow, matchWorldEntries, renderWorldEntries } from './lore'
 import { composeSystemPrompt, DEFAULT_PACK_ID, findPack, renderTemplate } from './packs'
 import { PROVIDERS } from './providers'
@@ -83,7 +95,14 @@ interface AppState {
   /** 搜索命中浏览状态：当前会话里正在看第几条命中 */
   browse: { query: string; index: number } | null
   characters: CharacterCard[]
+  worlds: WorldItem[]
+  presets: PresetItem[]
+  prompts: PromptItem[]
 
+  saveVaultItem: (kind: VaultKind, item: WorldItem | PresetItem | PromptItem) => void
+  removeVaultItem: (kind: VaultKind, id: string) => void
+  applyPreset: (preset: PresetItem) => void
+  applyPrompt: (prompt: PromptItem) => void
   importCharacter: (card: CharacterCard) => void
   removeCharacter: (id: string) => void
   startWithCharacter: (characterId: string) => Promise<void>
@@ -238,9 +257,17 @@ export const useApp = create<AppState>()((set, get) => {
     draft: '',
     browse: null,
     characters: [],
+    worlds: [],
+    presets: [],
+    prompts: [],
 
     async init() {
-      set({ characters: listCharacters() })
+      set({
+        characters: listCharacters(),
+        worlds: listWorlds(),
+        presets: listPresets(),
+        prompts: listPrompts(),
+      })
       const sessions = await getRepo().listSessions()
       const current = sessions[0] ?? null
       set({
@@ -265,6 +292,31 @@ export const useApp = create<AppState>()((set, get) => {
 
     setDrawer: (open) => set({ drawerOpen: open }),
     setSettings: (open) => set({ settingsOpen: open }),
+
+    saveVaultItem(kind, item) {
+      if (kind === 'world') set({ worlds: saveWorld(item as WorldItem) })
+      else if (kind === 'preset') set({ presets: savePreset(item as PresetItem) })
+      else set({ prompts: savePrompt(item as PromptItem) })
+    },
+
+    removeVaultItem(kind, id) {
+      if (kind === 'world') set({ worlds: deleteWorld(id) })
+      else if (kind === 'preset') set({ presets: deletePreset(id) })
+      else set({ prompts: deletePrompt(id) })
+    },
+
+    /** 应用预设：只覆盖它声明过的字段，没写的保持原样 */
+    applyPreset(preset) {
+      const patch: Partial<ChatConfig> = {}
+      if (preset.temperature !== undefined) patch.temperature = preset.temperature
+      if (preset.topP !== undefined) patch.topP = preset.topP
+      if (preset.maxTokens !== undefined) patch.maxTokens = preset.maxTokens
+      get().saveConfig(patch)
+    },
+
+    applyPrompt(prompt) {
+      get().saveConfig({ systemPrompt: prompt.text })
+    },
 
     importCharacter(card) {
       set({ characters: saveCharacter(card) })
