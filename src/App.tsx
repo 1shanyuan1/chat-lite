@@ -385,16 +385,6 @@ function SettingsSheet() {
           }}
         />
 
-        <label className="mb-1 block text-xs text-neutral-500">
-          你在角色眼中的称呼（用于替换 {'{{user}}'}）
-        </label>
-        <input
-          className={`${field} mb-3`}
-          placeholder="例如：旅人"
-          value={draft.userName ?? ''}
-          onChange={(e) => setDraft({ ...draft, userName: e.target.value })}
-        />
-
 
         <button
           className="w-full rounded-xl bg-neutral-900 py-3 text-sm text-white"
