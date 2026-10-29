@@ -11,7 +11,8 @@
     "selfcheck": "esbuild scripts/selfcheck.mjs --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/selfcheck.mjs --log-level=error && node node_modules/.cache/selfcheck.mjs",
     "livecheck": "esbuild scripts/livecheck.mjs --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/livecheck.mjs --log-level=error && node node_modules/.cache/livecheck.mjs",
     "cap:sync": "npm run build && cap sync android",
-    "apk:debug": "cd android && gradlew.bat assembleDebug"
+    "apk:debug": "cd android && gradlew.bat assembleDebug",
+    "samples": "esbuild scripts/make-samples.ts --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/samples.mjs --log-level=error && node node_modules/.cache/samples.mjs"
   },
   "dependencies": {
     "@capacitor-community/sqlite": "^7.0.2",
