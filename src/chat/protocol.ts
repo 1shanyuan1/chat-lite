@@ -46,7 +46,7 @@ export function buildChatRequest(
 ): HttpRequest {
   const base = trimBase(auth.baseUrl)
   const { model, messages, system, stream, includeUsage, topP, maxTokens, reasoningLevel } = options
-  const reason = reasoningPayload(protocol, reasoningLevel, auth.baseUrl)
+  const reason = reasoningPayload(protocol, reasoningLevel, { baseUrl: auth.baseUrl, modelId: model })
 
   if (protocol === 'anthropic') {
     return {
@@ -89,13 +89,21 @@ export function buildChatRequest(
           parts: [{ text: m.content }],
         })),
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-        ...(topP !== undefined || maxTokens !== undefined || reason.thinkingBudget !== undefined
+        ...(topP !== undefined ||
+        maxTokens !== undefined ||
+        reason.thinkingBudget !== undefined ||
+        reason.thinkingLevel !== undefined
           ? {
               generationConfig: {
                 ...(topP !== undefined ? { topP } : {}),
                 ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
-                ...(reason.thinkingBudget !== undefined
-                  ? { thinkingConfig: { thinkingBudget: reason.thinkingBudget } }
+                ...(reason.thinkingBudget !== undefined || reason.thinkingLevel !== undefined
+                  ? {
+                      thinkingConfig: {
+                        ...(reason.thinkingBudget !== undefined ? { thinkingBudget: reason.thinkingBudget } : {}),
+                        ...(reason.thinkingLevel !== undefined ? { thinkingLevel: reason.thinkingLevel } : {}),
+                      },
+                    }
                   : {}),
               },
             }
@@ -120,6 +128,7 @@ export function buildChatRequest(
       ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
       ...(reason.effort ? { reasoning_effort: reason.effort } : {}),
       ...(reason.enableThinking !== undefined ? { enable_thinking: reason.enableThinking } : {}),
+      ...(reason.gatewayBudget !== undefined ? { thinking_budget: reason.gatewayBudget } : {}),
       // 只有 OpenAI 兼容协议支持这个字段，部分网关会因此报 400，上层有降级重试
       ...(stream && includeUsage ? { stream_options: { include_usage: true } } : {}),
     }),

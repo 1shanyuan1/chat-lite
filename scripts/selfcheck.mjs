@@ -476,7 +476,7 @@ ok(captured.top_p === 0.95 && captured.max_tokens === 999, `没有预设时回�
 /* ---------------- 思考强度 ---------------- */
 section('思考强度')
 
-const { reasoningControl, reasoningPayload, usesEnableThinking } = await import('@/chat/reasoning')
+const { reasoningControl, reasoningPayload, usesEnableThinking, canDisableExplicitly } = await import('@/chat/reasoning')
 const { inferReasoning } = await import('@/chat/models')
 const { buildChatRequest } = await import('@/chat/protocol')
 const { normalize } = await import('@/chat/models')
@@ -498,16 +498,31 @@ ok(reasoningPayload('anthropic', 'on').budgetTokens === 4096, 'Anthropic 开启�
 ok(reasoningPayload('gemini', 'on').thinkingBudget === -1, 'Gemini 开启用动态预算 -1')
 ok(reasoningPayload('openai', 'high').effort === 'high', '档位直传 OpenAI')
 ok(reasoningPayload('anthropic', 'high').budgetTokens === 8192, '档位换算成 Anthropic 预算')
-ok(reasoningPayload('gemini', 'low').thinkingBudget === 2048, '档位换算成 Gemini 预算')
+ok(reasoningPayload('gemini', 'low').thinkingBudget === 1024, '档位换算成 Gemini 预算（low=1024）')
 
 // 国内网关走 enable_thinking（实测硅基流动：qwen3/deepseek 认它，reasoning_effort 被忽略）
 ok(usesEnableThinking('https://api.siliconflow.cn/v1'), '硅基流动识别为 enable_thinking 网关')
 ok(usesEnableThinking('https://dashscope.aliyuncs.com/compatible-mode/v1'), '百炼识别为网关')
 ok(!usesEnableThinking('https://api.openai.com/v1'), 'OpenAI 官方不是网关')
 ok(!usesEnableThinking(undefined), '没有地址时不判定为网关')
-ok(reasoningPayload('openai', 'off', 'https://api.siliconflow.cn/v1').enableThinking === false, '网关关闭用 enable_thinking=false')
-ok(reasoningPayload('openai', 'on', 'https://api.siliconflow.cn/v1').enableThinking === true, '网关开启用 enable_thinking=true')
-ok(reasoningPayload('openai', 'off', 'https://api.openai.com/v1').effort === 'none', '官方仍然用 reasoning_effort=none')
+const sf = { baseUrl: 'https://api.siliconflow.cn/v1', modelId: 'Qwen/Qwen3-8B' }
+ok(reasoningPayload('openai', 'off', sf).enableThinking === false, '网关关闭用 enable_thinking=false')
+ok(reasoningPayload('openai', 'on', sf).enableThinking === true, '网关开启用 enable_thinking=true')
+ok(reasoningPayload('openai', 'high', sf).gatewayBudget === 8192, '网关档位带 thinking_budget')
+ok(reasoningPayload('openai', 'off', { baseUrl: 'https://api.openai.com/v1' }).effort === 'none', '官方仍然用 reasoning_effort=none')
+
+// 借鉴 Chatbox：不能关的模型，off 退化成「不干预」
+ok(!canDisableExplicitly('o3'), 'o 系列不能关')
+ok(!canDisableExplicitly('gemini-2.5-pro'), 'Gemini 2.5 Pro 不能关')
+ok(canDisableExplicitly('Qwen/Qwen3-8B'), 'qwen3 可以关')
+ok(Object.keys(reasoningPayload('openai', 'off', { modelId: 'o3' })).length === 0, 'o3 选关闭时实际不发参数')
+ok(reasoningPayload('gemini', 'off', { modelId: 'gemini-2.5-pro' }).thinkingBudget === undefined, 'Gemini Pro 关闭不写 0')
+
+// 各家预算不同
+ok(reasoningPayload('gemini', 'high', { modelId: 'gemini-2.5-flash' }).thinkingBudget === 24576, 'Gemini high 用 24576')
+ok(reasoningPayload('gemini', 'medium', { modelId: 'gemini-2.5-flash' }).thinkingBudget === 8192, 'Gemini medium 用 8192')
+ok(reasoningPayload('gemini', 'high', { modelId: 'gemini-3-pro' }).thinkingLevel === 'high', 'Gemini 3 用 thinkingLevel')
+ok(reasoningPayload('anthropic', 'high').budgetTokens === 8192, 'Anthropic high 用 8192')
 
 // 模型名推断（网关普遍只给 id）
 ok(inferReasoning('Qwen/Qwen3-8B'), 'qwen3 推断为支持思考')
@@ -541,7 +556,7 @@ ok(anthOn.thinking?.type === 'enabled' && anthOn.thinking.budget_tokens === 4096
 ok(anthOn.max_tokens > anthOn.thinking.budget_tokens, `max_tokens 自动大于预算（${anthOn.max_tokens} > 4096）`)
 ok(bodyOf('anthropic', { reasoningLevel: 'off' }).thinking?.type === 'disabled', 'Anthropic 关闭带 disabled')
 
-ok(bodyOf('gemini', { reasoningLevel: 'low' }).generationConfig?.thinkingConfig?.thinkingBudget === 2048, 'Gemini 带 thinkingConfig')
+ok(bodyOf('gemini', { reasoningLevel: 'low' }).generationConfig?.thinkingConfig?.thinkingBudget === 1024, 'Gemini 带 thinkingConfig')
 ok(bodyOf('gemini', { reasoningLevel: 'off' }).generationConfig?.thinkingConfig?.thinkingBudget === 0, 'Gemini 关闭写 0')
 
 // 元数据解析

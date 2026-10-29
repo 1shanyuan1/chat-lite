@@ -5,7 +5,7 @@ import type { ChatConfig } from '@/chat/client'
 import { humanizeError } from '@/chat/errors'
 import { fetchModels, loadCachedModels, type ModelInfo } from '@/chat/models'
 import { resolveProtocol, type ProtocolSetting } from '@/chat/protocol'
-import { labelOf, reasoningControl } from '@/chat/reasoning'
+import { canDisableExplicitly, labelOf, reasoningControl } from '@/chat/reasoning'
 import { BUILTIN_PACKS, findPack } from '@/chat/packs'
 import { findProvider, PROVIDER_GROUPS, PROVIDERS, PROVIDER_LABEL_CUSTOM, type Provider } from '@/chat/providers'
 import {
@@ -447,6 +447,7 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
   const protocol = resolveProtocol(config.protocol, config.baseUrl)
   const currentModel = models.find((m) => m.id === config.model)
   const control = reasoningControl(protocol, currentModel)
+  const canDisable = canDisableExplicitly(currentModel?.id)
   const reasoningValue = config.reasoningLevel
   const reasoningLabel =
     control.kind === 'levels'
@@ -558,7 +559,9 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
               默认
             </button>
             {control.kind === 'levels'
-              ? control.levels.map((level) => (
+              ? control.levels
+                  .filter((level) => canDisable || (level !== 'off' && level !== 'none'))
+                  .map((level) => (
                   <button
                     key={level}
                     className={`rounded-full px-2.5 py-0.5 text-[11px] ${
@@ -573,7 +576,7 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
                   </button>
                 ))
               : control.kind === 'toggle'
-                ? (['on', 'off'] as const).map((value) => (
+                ? (canDisable ? ['on', 'off'] : ['on']).map((value: string) => (
                     <button
                       key={value}
                       className={`rounded-full px-2.5 py-0.5 text-[11px] ${
@@ -594,6 +597,7 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
               ? '档位来自该模型的元数据'
               : '该模型只声明支持思考，未提供档位，因此只给开关'}
             {reasoningValue === undefined ? '；默认表示不干预，用服务商自己的设置' : ''}
+            {!canDisable ? '；该模型不支持关闭思考' : ''}
           </p>
         </div>
       )}
