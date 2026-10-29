@@ -1,11 +1,19 @@
 import type { Protocol } from './protocol'
 
-/** 统一的思考强度档位 */
-export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+/**
+ * 思考强度的三种控制形态：
+ * - levels：服务商在模型元数据里声明了档位，就原样给出
+ * - toggle：只声明“支持思考”，给一个开关
+ * - none：不支持思考，界面不显示
+ */
+export type ReasoningControl =
+  | { kind: 'levels'; levels: string[] }
+  | { kind: 'toggle' }
+  | { kind: 'none' }
 
 export const LEVEL_LABELS: Record<string, string> = {
-  off: '关',
   none: '关',
+  off: '关',
   minimal: '极低',
   low: '低',
   medium: '中',
@@ -13,16 +21,15 @@ export const LEVEL_LABELS: Record<string, string> = {
   xhigh: '极高',
 }
 
-/** 各家 API 只认自己的名字，做一次收敛 */
-const API_LEVEL: Record<string, string> = {
-  minimal: 'minimal',
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  xhigh: 'high',
-}
+export const labelOf = (value: string) => LEVEL_LABELS[value] ?? value
 
-/** Anthropic / Gemini 用 token 预算表达强度 */
+/** 开关/档位都用同一个字段承载：undefined=不干预，off=明确关闭，on=明确开启，其余为档位名 */
+export type ReasoningValue = string | undefined
+
+/** Anthropic 无档位时开启思考用的默认预算 */
+const TOGGLE_ON_BUDGET = 4096
+
+/** Anthropic / Gemini 用 token 预算表达强度（参考官方区间：anthropic ≥1024，gemini 2.5 128–32768） */
 const LEVEL_BUDGET: Record<string, number> = {
   minimal: 1024,
   low: 2048,
@@ -31,45 +38,51 @@ const LEVEL_BUDGET: Record<string, number> = {
   xhigh: 16384,
 }
 
-export const labelOf = (level: string) => LEVEL_LABELS[level] ?? level
-export const isOff = (level?: string) => !level || level === 'off' || level === 'none'
-export const budgetOf = (level: string) => LEVEL_BUDGET[level] ?? LEVEL_BUDGET.medium
-
-/** 服务商没给档位时的兜底：按协议给一组够用的 */
-export function defaultLevels(protocol: Protocol): string[] {
-  if (protocol === 'gemini') return ['off', 'low', 'high']
-  return ['off', 'low', 'medium', 'high']
-}
-
-/**
- * 决定某个模型应该显示哪几个档位：
- * 1. 模型元数据里声明了档位 → 原样使用（服务商说了算）
- * 2. 只声明支持思考 → 用协议默认档位
- * 3. 不支持思考 → 空数组，界面不显示
- */
-export function levelsForModel(
+export function reasoningControl(
   protocol: Protocol,
   model: { reasoning?: boolean; reasoningLevels?: string[] } | undefined
-): string[] {
-  if (!model) return []
-  if (model.reasoningLevels && model.reasoningLevels.length > 0) return model.reasoningLevels
-  if (model.reasoning) return defaultLevels(protocol)
-  return []
+): ReasoningControl {
+  if (!model) return { kind: 'none' }
+  if (model.reasoningLevels && model.reasoningLevels.length > 0) {
+    return { kind: 'levels', levels: model.reasoningLevels }
+  }
+  if (model.reasoning) return { kind: 'toggle' }
+  return { kind: 'none' }
 }
 
-export interface ReasoningParams {
+export interface ReasoningPayload {
   /** OpenAI 兼容：reasoning_effort */
-  reasoningEffort?: string
+  effort?: string
+  /** Anthropic：thinking.type = disabled */
+  disabled?: boolean
   /** Anthropic：thinking.budget_tokens */
   budgetTokens?: number
-  /** Gemini：thinkingConfig.thinkingBudget */
+  /** Gemini：thinkingConfig.thinkingBudget（0 关闭，-1 动态） */
   thinkingBudget?: number
 }
 
-export function reasoningParams(protocol: Protocol, level?: string): ReasoningParams {
-  if (isOff(level)) return {}
-  const key = level as string
-  if (protocol === 'anthropic') return { budgetTokens: budgetOf(key) }
-  if (protocol === 'gemini') return { thinkingBudget: budgetOf(key) }
-  return { reasoningEffort: API_LEVEL[key] ?? key }
+/**
+ * 把界面上的值翻译成各家请求字段。
+ * undefined 表示「不干预」——不发任何参数，遵循服务商自己的默认。
+ */
+export function reasoningPayload(protocol: Protocol, value: ReasoningValue): ReasoningPayload {
+  if (value === undefined) return {}
+
+  if (value === 'off') {
+    if (protocol === 'anthropic') return { disabled: true }
+    if (protocol === 'gemini') return { thinkingBudget: 0 }
+    return { effort: 'none' }
+  }
+
+  if (value === 'on') {
+    if (protocol === 'anthropic') return { budgetTokens: TOGGLE_ON_BUDGET }
+    if (protocol === 'gemini') return { thinkingBudget: -1 }
+    // OpenAI 兼容没有「开启」参数，不干预即默认开启
+    return {}
+  }
+
+  const budget = LEVEL_BUDGET[value] ?? LEVEL_BUDGET.medium
+  if (protocol === 'anthropic') return { budgetTokens: budget }
+  if (protocol === 'gemini') return { thinkingBudget: budget }
+  return { effort: value }
 }

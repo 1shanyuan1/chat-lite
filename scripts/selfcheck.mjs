@@ -413,9 +413,6 @@ const { initRepo } = await import('@/db/runtime')
 const { useApp } = await import('@/chat/store')
 const { emptySetting } = await import('@/chat/settings')
 const { presetOverrides } = await import('@/chat/vault')
-const { levelsForModel, reasoningParams, labelOf, defaultLevels } = await import('@/chat/reasoning')
-const { buildChatRequest } = await import('@/chat/protocol')
-const { normalize } = await import('@/chat/models')
 
 await initPlatform()
 await initRepo()
@@ -479,56 +476,54 @@ ok(captured.top_p === 0.95 && captured.max_tokens === 999, `没有预设时回�
 /* ---------------- 思考强度 ---------------- */
 section('思考强度')
 
-ok(levelsForModel('openai', undefined).length === 0, '没有模型信息时不显示档位')
-ok(levelsForModel('openai', { reasoning: false }).length === 0, '不支持思考的模型没有档位')
-ok(levelsForModel('openai', { reasoning: true }).join(',') === 'off,low,medium,high', '只声明支持思考时用默认四档')
-ok(levelsForModel('gemini', { reasoning: true }).join(',') === 'off,low,high', 'Gemini 默认三档')
-ok(
-  levelsForModel('openai', { reasoning: true, reasoningLevels: ['low', 'high'] }).join(',') === 'low,high',
-  '服务商声明了档位就用它的（原样，不补默认）'
-)
+const { reasoningControl, reasoningPayload } = await import('@/chat/reasoning')
+const { buildChatRequest } = await import('@/chat/protocol')
+const { normalize } = await import('@/chat/models')
 
-ok(reasoningParams('openai', undefined).reasoningEffort === undefined, '关掉时不发任何参数')
-ok(reasoningParams('openai', 'off').reasoningEffort === undefined, 'off 不发参数')
-ok(reasoningParams('openai', 'medium').reasoningEffort === 'medium', 'OpenAI 用 reasoning_effort')
-ok(reasoningParams('openai', 'xhigh').reasoningEffort === 'high', 'xhigh 收敛成 high（API 只认四档）')
-ok(reasoningParams('anthropic', 'high').budgetTokens === 8192, 'Anthropic 转成预算 token')
-ok(reasoningParams('gemini', 'low').thinkingBudget === 2048, 'Gemini 转成 thinkingBudget')
-ok(labelOf('medium') === '中' && labelOf('off') === '关', '档位有中文标签')
-ok(labelOf('unknown-level') === 'unknown-level', '未知档位原样显示')
+// 三种控制形态
+ok(reasoningControl('openai', undefined).kind === 'none', '没有模型信息时不显示控制')
+ok(reasoningControl('openai', { reasoning: false }).kind === 'none', '不支持思考的模型不显示控制')
+ok(reasoningControl('openai', { reasoning: true }).kind === 'toggle', '只声明支持思考 → 给开关')
+const levelsControl = reasoningControl('openai', { reasoning: true, reasoningLevels: ['none', 'low', 'high'] })
+ok(levelsControl.kind === 'levels' && levelsControl.levels.join(',') === 'none,low,high', '服务商声明档位 → 原样给出')
 
-// 三种协议的请求体
+// 载荷映射：默认不干预
+ok(Object.keys(reasoningPayload('openai', undefined)).length === 0, '默认不干预：不发任何参数')
+ok(reasoningPayload('openai', 'off').effort === 'none', 'OpenAI 关闭用 reasoning_effort=none')
+ok(reasoningPayload('anthropic', 'off').disabled === true, 'Anthropic 关闭用 thinking.type=disabled')
+ok(reasoningPayload('gemini', 'off').thinkingBudget === 0, 'Gemini 关闭用 thinkingBudget=0')
+ok(Object.keys(reasoningPayload('openai', 'on')).length === 0, 'OpenAI 开启不额外发参数（默认即开）')
+ok(reasoningPayload('anthropic', 'on').budgetTokens === 4096, 'Anthropic 开启用默认预算')
+ok(reasoningPayload('gemini', 'on').thinkingBudget === -1, 'Gemini 开启用动态预算 -1')
+ok(reasoningPayload('openai', 'high').effort === 'high', '档位直传 OpenAI')
+ok(reasoningPayload('anthropic', 'high').budgetTokens === 8192, '档位换算成 Anthropic 预算')
+ok(reasoningPayload('gemini', 'low').thinkingBudget === 2048, '档位换算成 Gemini 预算')
+
+// 请求体
 const msgs = [{ role: 'user', content: 'hi' }]
 const auth = { baseUrl: 'https://example.com/v1', apiKey: 'k' }
-const openaiBody = JSON.parse(
-  buildChatRequest('openai', auth, { model: 'm', messages: msgs, stream: true, reasoningLevel: 'high' }).body
-)
-ok(openaiBody.reasoning_effort === 'high', 'OpenAI 请求体带 reasoning_effort')
+const bodyOf = (protocol, opts) => JSON.parse(buildChatRequest(protocol, auth, { model: 'm', messages: msgs, stream: true, ...opts }).body)
 
-const anthropicBody = JSON.parse(
-  buildChatRequest('anthropic', auth, { model: 'm', messages: msgs, stream: true, reasoningLevel: 'medium', maxTokens: 512 }).body
-)
-ok(anthropicBody.thinking?.budget_tokens === 4096, 'Anthropic 请求体带 thinking.budget_tokens')
-ok(anthropicBody.max_tokens > anthropicBody.thinking.budget_tokens, `max_tokens 自动大于预算（${anthropicBody.max_tokens} > 4096）`)
+ok(bodyOf('openai', { reasoningLevel: 'high' }).reasoning_effort === 'high', 'OpenAI 请求体带 reasoning_effort')
+ok(bodyOf('openai', { reasoningLevel: 'off' }).reasoning_effort === 'none', 'OpenAI 关闭时发 none')
+ok(!('reasoning_effort' in bodyOf('openai', {})), '默认不带 reasoning_effort')
 
-const geminiBody = JSON.parse(
-  buildChatRequest('gemini', { baseUrl: 'https://g/v1beta', apiKey: 'k' }, { model: 'm', messages: msgs, stream: true, reasoningLevel: 'low' }).body
-)
-ok(geminiBody.generationConfig?.thinkingConfig?.thinkingBudget === 2048, 'Gemini 请求体带 thinkingConfig')
+const anthOn = bodyOf('anthropic', { reasoningLevel: 'medium', maxTokens: 512 })
+ok(anthOn.thinking?.type === 'enabled' && anthOn.thinking.budget_tokens === 4096, 'Anthropic 开启带 budget_tokens')
+ok(anthOn.max_tokens > anthOn.thinking.budget_tokens, `max_tokens 自动大于预算（${anthOn.max_tokens} > 4096）`)
+ok(bodyOf('anthropic', { reasoningLevel: 'off' }).thinking?.type === 'disabled', 'Anthropic 关闭带 disabled')
 
-const openaiOff = JSON.parse(
-  buildChatRequest('openai', auth, { model: 'm', messages: msgs, stream: true, reasoningLevel: 'off' }).body
-)
-ok(!('reasoning_effort' in openaiOff), '关掉时请求体里没有该字段')
+ok(bodyOf('gemini', { reasoningLevel: 'low' }).generationConfig?.thinkingConfig?.thinkingBudget === 2048, 'Gemini 带 thinkingConfig')
+ok(bodyOf('gemini', { reasoningLevel: 'off' }).generationConfig?.thinkingConfig?.thinkingBudget === 0, 'Gemini 关闭写 0')
 
-// 服务商元数据里的档位能被解析出来
+// 元数据解析
 const parsedModels = normalize(
   { data: [{ id: 'x', supports_reasoning: true, reasoning_efforts: ['low', 'medium'] }] },
   'openai'
 )
-ok(parsedModels[0].reasoning === true && parsedModels[0].reasoningLevels?.join(',') === 'low,medium', '从模型元数据解析思考档位')
+ok(parsedModels[0].reasoning === true && parsedModels[0].reasoningLevels?.join(',') === 'low,medium', '从模型元数据解析档位')
 
-// 端到端：配置里的档位真的进了请求
+// 端到端
 st().saveConfig({ reasoningLevel: 'high' })
 await st().startWithSettings([doc.id])
 await st().send('测试档位')

@@ -18,7 +18,7 @@ import { contextWindow, matchWorldEntries, renderWorldEntries } from './lore'
 import { composeSystemPrompt, DEFAULT_PACK_ID, findPack, renderTemplate } from './packs'
 import { PROVIDERS } from './providers'
 import { fetchModels, loadCachedModels, type ModelInfo } from './models'
-import { levelsForModel } from './reasoning'
+import { reasoningControl } from './reasoning'
 import { resolveProtocol } from './protocol'
 import {
   emptyUsage,
@@ -326,8 +326,11 @@ export const useApp = create<AppState>()((set, get) => {
     selectModel(model) {
       const { config } = get()
       const protocol = resolveProtocol(config.protocol, config.baseUrl)
-      const levels = levelsForModel(protocol, model)
-      const keepLevel = config.reasoningLevel && levels.includes(config.reasoningLevel)
+      const control = reasoningControl(protocol, model)
+      const keepLevel =
+        config.reasoningLevel !== undefined &&
+        ((control.kind === 'levels' && control.levels.includes(config.reasoningLevel)) ||
+          (control.kind === 'toggle' && (config.reasoningLevel === 'on' || config.reasoningLevel === 'off')))
       get().saveConfig({
         model: model.id,
         contextLimit: model.contextLength ?? config.contextLimit,

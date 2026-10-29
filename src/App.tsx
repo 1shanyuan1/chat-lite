@@ -5,7 +5,7 @@ import type { ChatConfig } from '@/chat/client'
 import { humanizeError } from '@/chat/errors'
 import { fetchModels, loadCachedModels, type ModelInfo } from '@/chat/models'
 import { resolveProtocol, type ProtocolSetting } from '@/chat/protocol'
-import { isOff, labelOf, levelsForModel } from '@/chat/reasoning'
+import { labelOf, reasoningControl } from '@/chat/reasoning'
 import { BUILTIN_PACKS, findPack } from '@/chat/packs'
 import { findProvider, PROVIDER_GROUPS, PROVIDERS, PROVIDER_LABEL_CUSTOM, type Provider } from '@/chat/providers'
 import {
@@ -446,7 +446,20 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
   const pack = findPack(sessions.find((s) => s.id === currentId)?.packId ?? config.packId)
   const protocol = resolveProtocol(config.protocol, config.baseUrl)
   const currentModel = models.find((m) => m.id === config.model)
-  const levels = levelsForModel(protocol, currentModel)
+  const control = reasoningControl(protocol, currentModel)
+  const reasoningValue = config.reasoningLevel
+  const reasoningLabel =
+    control.kind === 'levels'
+      ? reasoningValue === undefined
+        ? '默认'
+        : labelOf(reasoningValue)
+      : control.kind === 'toggle'
+        ? reasoningValue === 'on'
+          ? '开'
+          : reasoningValue === 'off'
+            ? '关'
+            : '默认'
+        : ''
 
   useEffect(() => {
     if (models.length === 0 && !modelsLoading) void loadModels()
@@ -483,7 +496,7 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
           <span className="shrink-0 opacity-60">{modelOpen ? '×' : '▾'}</span>
         </button>
 
-        {levels.length > 0 && (
+        {control.kind !== 'none' && (
           <button
             className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
               reasonOpen ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
@@ -493,7 +506,7 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
               setReasonOpen((v) => !v)
             }}
           >
-            思考 {labelOf(config.reasoningLevel ?? 'off')}
+            思考 {reasoningLabel}
             <span className="opacity-60">{reasonOpen ? '×' : '▾'}</span>
           </button>
         )}
@@ -533,29 +546,55 @@ function Composer({ meter }: { meter?: React.ReactNode }) {
             </button>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {levels.map((level) => {
-              const active = isOff(config.reasoningLevel) ? level === 'off' : config.reasoningLevel === level
-              return (
-                <button
-                  key={level}
-                  className={`rounded-full px-2.5 py-0.5 text-[11px] ${
-                    active ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600'
-                  }`}
-                  onClick={() => {
-                    setReasoningLevel(level)
-                    setReasonOpen(false)
-                  }}
-                >
-                  {labelOf(level)}
-                </button>
-              )
-            })}
+            <button
+              className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+                reasoningValue === undefined ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600'
+              }`}
+              onClick={() => {
+                setReasoningLevel(undefined)
+                setReasonOpen(false)
+              }}
+            >
+              默认
+            </button>
+            {control.kind === 'levels'
+              ? control.levels.map((level) => (
+                  <button
+                    key={level}
+                    className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+                      reasoningValue === level ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600'
+                    }`}
+                    onClick={() => {
+                      setReasoningLevel(level)
+                      setReasonOpen(false)
+                    }}
+                  >
+                    {labelOf(level)}
+                  </button>
+                ))
+              : control.kind === 'toggle'
+                ? (['on', 'off'] as const).map((value) => (
+                    <button
+                      key={value}
+                      className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+                        reasoningValue === value ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600'
+                      }`}
+                      onClick={() => {
+                        setReasoningLevel(value)
+                        setReasonOpen(false)
+                      }}
+                    >
+                      {value === 'on' ? '开' : '关'}
+                    </button>
+                  ))
+                : null}
           </div>
-          {!currentModel?.reasoningLevels && (
-            <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-400">
-              该服务商未声明档位，按协议给的是默认四档
-            </p>
-          )}
+          <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-400">
+            {control.kind === 'levels'
+              ? '档位来自该模型的元数据'
+              : '该模型只声明支持思考，未提供档位，因此只给开关'}
+            {reasoningValue === undefined ? '；默认表示不干预，用服务商自己的设置' : ''}
+          </p>
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import type { HttpRequest } from '@/platform'
-import { reasoningParams } from './reasoning'
+import { reasoningPayload } from './reasoning'
 
 export type Protocol = 'openai' | 'anthropic' | 'gemini'
 export type ProtocolSetting = Protocol | 'auto'
@@ -46,7 +46,7 @@ export function buildChatRequest(
 ): HttpRequest {
   const base = trimBase(auth.baseUrl)
   const { model, messages, system, stream, includeUsage, topP, maxTokens, reasoningLevel } = options
-  const reason = reasoningParams(protocol, reasoningLevel)
+  const reason = reasoningPayload(protocol, reasoningLevel)
 
   if (protocol === 'anthropic') {
     return {
@@ -66,7 +66,11 @@ export function buildChatRequest(
           ? Math.max(maxTokens ?? 8192, reason.budgetTokens + 2048)
           : (maxTokens ?? 8192),
         ...(topP !== undefined ? { top_p: topP } : {}),
-        ...(reason.budgetTokens ? { thinking: { type: 'enabled', budget_tokens: reason.budgetTokens } } : {}),
+        ...(reason.disabled
+          ? { thinking: { type: 'disabled' } }
+          : reason.budgetTokens
+            ? { thinking: { type: 'enabled', budget_tokens: reason.budgetTokens } }
+            : {}),
         ...(system ? { system } : {}),
         messages,
         stream,
@@ -114,7 +118,7 @@ export function buildChatRequest(
       stream,
       ...(topP !== undefined ? { top_p: topP } : {}),
       ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
-      ...(reason.reasoningEffort ? { reasoning_effort: reason.reasoningEffort } : {}),
+      ...(reason.effort ? { reasoning_effort: reason.effort } : {}),
       // 只有 OpenAI 兼容协议支持这个字段，部分网关会因此报 400，上层有降级重试
       ...(stream && includeUsage ? { stream_options: { include_usage: true } } : {}),
     }),
