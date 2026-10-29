@@ -14,6 +14,8 @@ export interface Session {
   characterId?: string
   /** 挂载的设定文件，可多个 */
   settingIds?: string[]
+  /** 绑定的生成预设（可选） */
+  presetId?: string
 }
 
 export interface TurnUser {
@@ -59,7 +61,8 @@ export interface Repo {
     title: string,
     systemPrompt?: string,
     packId?: string,
-    settingIds?: string[]
+    settingIds?: string[],
+    presetId?: string
   ): Promise<Session>
   renameSession(id: string, title: string): Promise<void>
   setSessionPack(id: string, packId: string): Promise<void>
@@ -126,8 +129,8 @@ export function createLocalRepo(): Repo {
     async listSessions() {
       return readJson<Session[]>(SESSIONS, []).sort((a, b) => b.updatedAt - a.updatedAt)
     },
-    async createSession(title, systemPrompt, packId, settingIds) {
-      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, settingIds }
+    async createSession(title, systemPrompt, packId, settingIds, presetId) {
+      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, settingIds, presetId }
       writeJson(SESSIONS, [session, ...readJson<Session[]>(SESSIONS, [])])
       return session
     },
@@ -214,7 +217,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   system_prompt TEXT,
   pack_id TEXT,
   character_id TEXT,
-  setting_ids TEXT
+  setting_ids TEXT,
+  preset_id TEXT
 );
 CREATE TABLE IF NOT EXISTS turns (
   id TEXT PRIMARY KEY NOT NULL,
@@ -242,6 +246,7 @@ export async function createSqliteRepo(): Promise<Repo> {
   await db.execute('ALTER TABLE sessions ADD COLUMN pack_id TEXT').catch(() => undefined)
   await db.execute('ALTER TABLE sessions ADD COLUMN character_id TEXT').catch(() => undefined)
   await db.execute('ALTER TABLE sessions ADD COLUMN setting_ids TEXT').catch(() => undefined)
+  await db.execute('ALTER TABLE sessions ADD COLUMN preset_id TEXT').catch(() => undefined)
 
   const rowToTurn = (row: Record<string, unknown>): ChatTurn => ({
     id: String(row.id),
@@ -255,7 +260,7 @@ export async function createSqliteRepo(): Promise<Repo> {
   return {
     async listSessions() {
       const res = await db.query(
-        'SELECT id, title, updated_at, system_prompt, pack_id, character_id, setting_ids FROM sessions ORDER BY updated_at DESC'
+        'SELECT id, title, updated_at, system_prompt, pack_id, character_id, setting_ids, preset_id FROM sessions ORDER BY updated_at DESC'
       )
       return (res.values ?? []).map((row: Record<string, unknown>) => ({
         id: String(row.id),
@@ -265,10 +270,11 @@ export async function createSqliteRepo(): Promise<Repo> {
         packId: row.pack_id == null ? undefined : String(row.pack_id),
         characterId: row.character_id == null ? undefined : String(row.character_id),
         settingIds: parseIds(row.setting_ids),
+        presetId: row.preset_id == null ? undefined : String(row.preset_id),
       }))
     },
-    async createSession(title, systemPrompt, packId, settingIds) {
-      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, settingIds }
+    async createSession(title, systemPrompt, packId, settingIds, presetId) {
+      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, settingIds, presetId }
       await db.run(
         'INSERT INTO sessions (id, title, updated_at, system_prompt, pack_id, setting_ids) VALUES (?, ?, ?, ?, ?, ?)',
         [

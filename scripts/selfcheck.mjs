@@ -404,6 +404,72 @@ ok(collectEntries(two).length === 6, `合并多份设定的条目（${collectEnt
 ok(pickGreeting([fromWorld, fromCard], '旅人')?.text.includes('旅人'), '多份里挑带开场白的那份并替换宏')
 ok(pickGreeting([fromWorld], '旅人') === null, '都没有开场白时返回 null')
 
+/* ---------------- 请求体装配（拦截平台层，不联网） ---------------- */
+section('请求装配')
+
+const { initPlatform, platform } = await import('@/platform')
+const { initRepo } = await import('@/db/runtime')
+const { useApp } = await import('@/chat/store')
+const { emptySetting } = await import('@/chat/settings')
+const { presetOverrides } = await import('@/chat/vault')
+
+await initPlatform()
+await initRepo()
+
+// 用假的流替换真实网络：记录请求体，回一段极简 SSE
+let captured = null
+platform().stream = async function* (req) {
+  captured = JSON.parse(req.body)
+  captured.__headers = req.headers
+  yield 'data: {"choices":[{"delta":{"content":"好"}}]}\n\n'
+  yield 'data: [DONE]\n\n'
+}
+
+const st = () => useApp.getState()
+await st().init()
+st().saveConfig({
+  baseUrl: 'https://example.com/v1',
+  apiKey: 'test-key',
+  model: 'test-model',
+  systemPrompt: '',
+  protocol: 'openai',
+  userName: '旅人',
+  temperature: 1.2,
+})
+
+ok(presetOverrides(undefined).temperature === undefined, '没有预设时不覆盖任何字段')
+ok(presetOverrides({ id: 'p', name: 'x', temperature: 0.3, topP: 0.8, createdAt: 0, updatedAt: 0 }).topP === 0.8, '预设覆盖 top_p')
+
+const doc = emptySetting()
+doc.name = '林深'
+doc.body = '深夜电台主播，今晚的听众只有{{user}}一个人'
+doc.entries = [{ id: 'e', keys: ['节目'], content: '节目叫《夜航》', enabled: true }]
+
+const preset = { id: 'preset-1', name: '严谨', temperature: 0.25, maxTokens: 123, createdAt: 0, updatedAt: 0 }
+st().importSetting(doc)
+st().savePreset(preset)
+
+await st().startWithSettings([doc.id], preset.id)
+const created = st().sessions[0]
+ok(created.settingIds?.[0] === doc.id, '会话记录了设定文件')
+ok(created.presetId === preset.id, '会话记录了预设')
+
+await st().send('节目叫什么')
+const body = captured
+ok(Boolean(body), '捕获到请求体')
+ok(body.temperature === 0.25, `会话预设覆盖了全局温度（${body.temperature}）`)
+ok(body.max_tokens === 123, `预设的长度进了请求（${body.max_tokens}）`)
+const sys = body.messages[0].role === 'system' ? body.messages[0].content : ''
+ok(sys.includes('林深') && sys.includes('深夜电台主播'), '设定正文进了 system prompt')
+ok(sys.includes('节目叫《夜航》'), '关键词条目命中后进了 system prompt')
+ok(sys.includes('旅人') && !sys.includes('{{user}}'), '设定里的 {{user}} 被替换成用户名')
+ok(body.messages.some((m) => m.content === '节目叫什么'), '用户消息在')
+
+// 换个不挂预设的会话，应回落到全局温度
+await st().startWithSettings([doc.id])
+await st().send('再说一次')
+ok(captured.temperature === 1.2, `没有预设时回落到全局温度（${captured.temperature}）`)
+
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))
 console.log(`通过 ${passed} 项，失败 ${failed} 项`)

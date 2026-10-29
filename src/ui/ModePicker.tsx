@@ -6,9 +6,10 @@ import { useImportFiles } from './useImportFiles'
 
 /** 新建对话：先选极简还是挂设定；挂设定时可多选 */
 export default function ModePicker() {
-  const { config, setPack, settings, startWithSettings, removeSetting } = useApp()
+  const { config, setPack, settings, presets, startWithSettings, removeSetting } = useApp()
   const { importFiles, busy, error, fileRef } = useImportFiles()
   const [selected, setSelected] = useState<string[]>([])
+  const [presetId, setPresetId] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
 
   const pack = findPack(config.packId)
@@ -72,6 +73,34 @@ export default function ModePicker() {
 
           {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
 
+          {presets.length > 0 && (
+            <div className="mb-3">
+              <div className="mb-1 text-[10px] text-neutral-400">预设（可选）</div>
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                <button
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+                    presetId === null ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                  }`}
+                  onClick={() => setPresetId(null)}
+                >
+                  不用
+                </button>
+                {presets.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+                      presetId === p.id ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                    }`}
+                    onClick={() => setPresetId(p.id)}
+                  >
+                    {p.name}
+                    {p.temperature !== undefined && <span className="ml-1 opacity-60">{p.temperature}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {settings.length === 0 ? (
             <div className="rounded-xl border border-dashed border-neutral-200 px-3 py-6 text-center">
               <p className="text-[11px] leading-relaxed text-neutral-400">
@@ -126,27 +155,22 @@ export default function ModePicker() {
             </div>
           )}
 
-          {selected.length > 0 ? (
-            <button
-              className="mt-3 w-full rounded-xl bg-neutral-900 py-2.5 text-sm text-white disabled:opacity-40"
-              disabled={starting}
-              onClick={() => {
-                setStarting(true)
-                void startWithSettings(selected).finally(() => setStarting(false))
-              }}
-            >
-              开始（挂 {selected.length} 份设定）
-            </button>
-          ) : (
-            !isTavern && (
-              <button
-                className="mt-3 w-full rounded-xl border border-neutral-200 py-2.5 text-sm text-neutral-700"
-                onClick={() => void setPack('minimal')}
-              >
-                不挂设定，直接写
-              </button>
-            )
-          )}
+          <button
+            className={`mt-3 w-full rounded-xl py-2.5 text-sm disabled:opacity-40 ${
+              selected.length > 0 ? 'bg-neutral-900 text-white' : 'border border-neutral-200 text-neutral-700'
+            }`}
+            disabled={starting || (isTavern && selected.length === 0)}
+            onClick={() => {
+              setStarting(true)
+              void startWithSettings(selected, presetId ?? undefined).finally(() => setStarting(false))
+            }}
+          >
+            {selected.length > 0
+              ? `开始（挂 ${selected.length} 份设定${presetId ? ' + 预设' : ''}）`
+              : isTavern
+                ? '先挂一份角色设定'
+                : '不挂设定，直接写'}
+          </button>
         </div>
       ) : (
         <p className="mt-6 text-center text-[11px] leading-relaxed text-neutral-400">

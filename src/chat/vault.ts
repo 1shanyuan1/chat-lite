@@ -40,6 +40,20 @@ export interface PromptItem {
 
 export type VaultEntry = WorldItem | PresetItem | PromptItem
 
+/** 预设只覆盖它声明过的字段，没写的留空（由调用方决定是否回退到全局） */
+export function presetOverrides(preset?: PresetItem | null): {
+  temperature?: number
+  topP?: number
+  maxTokens?: number
+} {
+  if (!preset) return {}
+  const out: { temperature?: number; topP?: number; maxTokens?: number } = {}
+  if (preset.temperature !== undefined) out.temperature = preset.temperature
+  if (preset.topP !== undefined) out.topP = preset.topP
+  if (preset.maxTokens !== undefined) out.maxTokens = preset.maxTokens
+  return out
+}
+
 const num = (v: unknown): number | undefined => {
   const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : NaN
   return Number.isFinite(n) ? n : undefined

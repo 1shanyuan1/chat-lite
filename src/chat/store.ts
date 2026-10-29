@@ -12,7 +12,7 @@ import { humanizeError } from './errors'
 import { collectEntries, pickGreeting, renderSettings, type SettingDoc } from './settings'
 import { deleteSetting, migrateLegacySettings, saveSetting } from '@/db/settings'
 import { findTurnHits } from './hit-nav'
-import type { PresetItem, PromptItem } from './vault'
+import { presetOverrides, type PresetItem, type PromptItem } from './vault'
 import { deletePreset, deletePrompt, listPresets, listPrompts, savePreset, savePrompt } from '@/db/vault'
 import { contextWindow, matchWorldEntries, renderWorldEntries } from './lore'
 import { composeSystemPrompt, DEFAULT_PACK_ID, findPack, renderTemplate } from './packs'
@@ -90,7 +90,7 @@ interface AppState {
 
   importSetting: (doc: SettingDoc) => void
   removeSetting: (id: string) => void
-  startWithSettings: (ids: string[]) => Promise<void>
+  startWithSettings: (ids: string[], presetId?: string) => Promise<void>
   savePreset: (item: PresetItem) => void
   removePreset: (id: string) => void
   savePrompt: (item: PromptItem) => void
@@ -163,8 +163,11 @@ export const useApp = create<AppState>()((set, get) => {
       worldBlock = renderWorldEntries(matchWorldEntries(collectEntries(docs), recent))
     }
 
+    const sessionPreset = session?.presetId ? get().presets.find((p) => p.id === session.presetId) : undefined
+
     const effectiveConfig: ChatConfig = {
       ...get().config,
+      ...presetOverrides(sessionPreset),
       systemPrompt: composeSystemPrompt(
         pack.systemPrompt,
         settingBlock,
@@ -311,11 +314,7 @@ export const useApp = create<AppState>()((set, get) => {
 
     /** 应用预设：只覆盖它声明过的字段，没写的保持原样 */
     applyPreset(preset) {
-      const patch: Partial<ChatConfig> = {}
-      if (preset.temperature !== undefined) patch.temperature = preset.temperature
-      if (preset.topP !== undefined) patch.topP = preset.topP
-      if (preset.maxTokens !== undefined) patch.maxTokens = preset.maxTokens
-      get().saveConfig(patch)
+      get().saveConfig(presetOverrides(preset))
     },
 
     applyPrompt(prompt) {
@@ -323,18 +322,24 @@ export const useApp = create<AppState>()((set, get) => {
     },
 
     /** 用一组设定文件开新会话：建会话 → 插入开场白 → 切过去 */
-    async startWithSettings(ids) {
+    async startWithSettings(ids, presetId) {
       const docs = ids
         .map((id) => get().settings.find((d) => d.id === id))
         .filter((d): d is SettingDoc => Boolean(d))
-      if (docs.length === 0) return
 
-      const title = docs.length === 1 ? docs[0].name : docs.map((d) => d.name).join(' · ').slice(0, 20)
+      // 允许不挂设定（写作模式下也成立）
+      const title =
+        docs.length === 0
+          ? '新会话'
+          : docs.length === 1
+            ? docs[0].name
+            : docs.map((d) => d.name).join(' · ').slice(0, 20)
       const session = await getRepo().createSession(
         title,
         undefined,
         get().config.packId ?? 'tavern',
-        docs.map((d) => d.id)
+        docs.map((d) => d.id),
+        presetId
       )
 
       const greeting = pickGreeting(docs, get().config.userName ?? '你')
