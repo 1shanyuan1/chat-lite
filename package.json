@@ -9,10 +9,13 @@
     "preview": "vite preview",
     "sync": "npm run build && cap sync",
     "selfcheck": "esbuild scripts/selfcheck.mjs --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/selfcheck.mjs --log-level=error && node node_modules/.cache/selfcheck.mjs",
-    "livecheck": "esbuild scripts/livecheck.mjs --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/livecheck.mjs --log-level=error && node node_modules/.cache/livecheck.mjs"
+    "livecheck": "esbuild scripts/livecheck.mjs --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/livecheck.mjs --log-level=error && node node_modules/.cache/livecheck.mjs",
+    "cap:sync": "npm run build && cap sync android",
+    "apk:debug": "cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {
     "@capacitor-community/sqlite": "^7.0.2",
+    "@capacitor/android": "^7.6.10",
     "@capacitor/app": "^7.0.0",
     "@capacitor/browser": "^7.0.2",
     "@capacitor/core": "^7.0.0",
