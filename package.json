@@ -5,14 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "sketch": "node design/sketch-server.mjs",
+    "build": "node scripts/pdfjs-assets.mjs && tsc --noEmit && vite build",
+    "postinstall": "node scripts/pdfjs-assets.mjs",
     "preview": "vite preview",
     "sync": "npm run build && cap sync",
-    "selfcheck": "esbuild scripts/selfcheck.mjs --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/selfcheck.mjs --log-level=error && node node_modules/.cache/selfcheck.mjs",
+    "selfcheck": "esbuild scripts/selfcheck.mjs --bundle --format=esm --platform=node --target=node20 --alias:@=./src --alias:@/chat/pdf-worker=scripts/shims/pdf-worker-node.mjs --external:pdfjs-dist --outfile=node_modules/.cache/selfcheck.mjs --log-level=error && node node_modules/.cache/selfcheck.mjs",
     "livecheck": "esbuild scripts/livecheck.mjs --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/livecheck.mjs --log-level=error && node node_modules/.cache/livecheck.mjs",
     "cap:sync": "npm run build && cap sync android",
     "apk:debug": "cd android && gradlew.bat assembleDebug",
-    "samples": "esbuild scripts/make-samples.ts --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/samples.mjs --log-level=error && node node_modules/.cache/samples.mjs"
+    "samples": "esbuild scripts/make-samples.ts --bundle --format=esm --platform=node --target=node20 --alias:@=./src --outfile=node_modules/.cache/samples.mjs --log-level=error && node node_modules/.cache/samples.mjs",
+    "taverncheck": "esbuild scripts/taverncheck.mjs --bundle --format=esm --platform=node --alias:@=./src --outfile=.cache/taverncheck.mjs --log-level=error && node .cache/taverncheck.mjs",
+    "tavernsweep": "esbuild scripts/tavernsweep.mjs --bundle --format=esm --platform=node --alias:@=./src --outfile=.cache/tavernsweep.mjs --log-level=error && node .cache/tavernsweep.mjs",
+    "continuitycheck": "esbuild scripts/continuitycheck.mjs --bundle --format=esm --platform=node --alias:@=./src --outfile=.cache/continuitycheck.mjs --log-level=error && node .cache/continuitycheck.mjs",
+    "evolvecheck": "esbuild scripts/evolvecheck.mjs --bundle --format=esm --platform=node --alias:@=./src --outfile=.cache/evolvecheck.mjs --log-level=error && node .cache/evolvecheck.mjs",
+    "cardcase": "esbuild scripts/cardcase.mjs --bundle --format=esm --platform=node --alias:@=./src --outfile=node_modules/.cache/cardcase.mjs --log-level=error && node node_modules/.cache/cardcase.mjs"
   },
   "dependencies": {
     "@capacitor-community/sqlite": "^7.0.2",
@@ -24,6 +31,7 @@
     "@capacitor/share": "^7.0.0",
     "capacitor-stream-http": "^0.1.0",
     "fflate": "^0.8.3",
+    "pdfjs-dist": "^6.5.438",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",

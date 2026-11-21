@@ -12,6 +12,9 @@ if (!apiKey) {
   process.exit(0)
 }
 
+/** 可选：设 EFFORT=low|medium|high|off 时额外验证思考档位 */
+const effort = process.env.EFFORT || ''
+
 const store = new Map()
 globalThis.localStorage = {
   getItem: (k) => (store.has(k) ? store.get(k) : null),
@@ -34,12 +37,16 @@ await initPlatform()
 await initRepo()
 const st = () => useApp.getState()
 await st().init()
+const baseUrl = process.env.BASE_URL ?? 'https://tokenrhythm.studio/v1'
+const modelId = process.env.MODEL ?? 'qwen3.8-flash'
+
 st().saveConfig({
-  baseUrl: process.env.BASE_URL ?? 'https://tokenrhythm.studio/v1',
+  baseUrl,
   apiKey,
-  model: process.env.MODEL ?? 'qwen3.8-flash',
+  model: modelId,
   systemPrompt: process.env.SYSTEM_PROMPT ?? '回答尽量简短',
   protocol: 'auto',
+  ...(effort ? { reasoningLevel: effort } : {}),
 })
 
 let failed = 0
@@ -85,6 +92,67 @@ if (u2?.cacheRead === 0 && !isCacheEstimated(u2)) {
 }
 if (isCacheEstimated(u2 ?? {})) {
   console.log('  提示：接口未返回缓存字段，此处为本地按前缀推算')
+}
+
+if (effort) {
+  const { reasoningPayload, pickAdapter } = await import('@/chat/reasoning')
+  const adapter = pickAdapter('openai', baseUrl, modelId)
+  console.log(`\n思考档位 ${effort} · 方言 ${adapter.id}`)
+  console.log(`  将发送 ${JSON.stringify(reasoningPayload('openai', effort, { baseUrl, modelId }))}`)
+
+  await st().send('鸡兔同笼：共 35 个头、94 只脚，鸡和兔各几只？只回答数字')
+  const last = activeVariant(st().turns[st().turns.length - 1]).assistant
+  ok(Boolean(last?.content), '带档位的请求成功')
+  console.log(`  思考内容：${last?.reasoning ? `${last.reasoning.length} 字` : '（接口未返回）'}`)
+  if (effort === 'off') ok(!last?.reasoning, '关闭后确实不再思考')
+  else ok(Boolean(last?.reasoning), '接口返回了思考内容')
+}
+
+if (process.env.SEARCH) {
+  const { resolveSearchKey, resolveSearchMode, resolveSearchSource } = await import('@/chat/web-search')
+  if (process.env.SEARCH_SOURCE) st().saveConfig({ searchSource: process.env.SEARCH_SOURCE })
+  st().saveConfig({ searchMode: process.env.SEARCH_MODE || 'local' })
+  const source = resolveSearchSource(st().config)
+  console.log(
+    `\n联网搜索 · 模式 ${resolveSearchMode(st().config)} · 源 ${source.label} · key ${resolveSearchKey(st().config) ? '有' : '无'}`
+  )
+
+  await st().send('DeepSeek V4.1 Flash 是哪天发布的？只回答日期，并给出处')
+  const last = activeVariant(st().turns[st().turns.length - 1]).assistant
+  const calls = last?.toolCalls ?? []
+  const sources = calls.flatMap((call) => call.sources ?? [])
+  ok(calls.length > 0, `模型调用了 web_search（${calls.length} 次）`)
+  ok(sources.length > 0, `拿到 ${sources.length} 条来源`)
+  ok(Boolean(last?.content), '最终回答有内容')
+  if (last?.content) console.log(`  回答：${last.content.replace(/\s+/g, ' ').slice(0, 120)}`)
+  if (sources[0]) console.log(`  首条来源：${sources[0].title ?? sources[0].url}`)
+  if (calls[0]?.result) console.log(`  工具输出：${calls[0].result.replace(/\s+/g, ' ').slice(0, 260)}`)
+  if (calls[0]?.error) console.log(`  工具报错：${calls[0].error}`)
+}
+
+if (process.env.VISION) {
+  const fs = await import('node:fs')
+  const file = process.env.VISION_FILE || 'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png'
+  const bytes = fs.readFileSync(file)
+  const attachment = {
+    id: 'v1',
+    kind: 'image',
+    name: file.split('/').pop(),
+    mime: 'image/png',
+    size: bytes.length,
+    dataUrl: `data:image/png;base64,${bytes.toString('base64')}`,
+  }
+
+  st().saveConfig({
+    visionModel: { enabled: true, baseUrl, model: process.env.VISION_MODEL || modelId },
+  })
+
+  const { describeAttachments } = await import('@/chat/vision')
+  console.log(`\n辅助识图 · ${attachment.name} · ${(bytes.length / 1024).toFixed(1)} KB`)
+  const out = await describeAttachments([attachment], st().config, (msg) => console.log(`  ${msg}`))
+  const description = out[0]?.description ?? ''
+  ok(Boolean(description) && !description.startsWith('（'), '识图返回了描述')
+  console.log(`  描述：${description.replace(/\s+/g, ' ').slice(0, 160)}`)
 }
 
 console.log('\n' + '-'.repeat(48))

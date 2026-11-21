@@ -1,0 +1,3 @@
+// node（selfcheck）里的替身：没有 Worker，pdfjs 自己会退回假 worker（主线程解析）。
+// 接线见 selfcheck 脚本里的 --alias:@/chat/pdf-worker=...
+export const createPdfWorker = () => null
