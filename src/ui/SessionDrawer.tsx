@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { exportFilename, sessionToMarkdown } from '@/chat/export'
 import { humanizeError } from '@/chat/errors'
 import { matchSessions } from '@/chat/session-search'
@@ -55,6 +55,7 @@ function SessionRow({
   hits,
   onOpen,
   onDelete,
+  onRename,
 }: {
   session: Session
   active: boolean
@@ -63,7 +64,56 @@ function SessionRow({
   hits: number
   onOpen: () => void
   onDelete: () => void
+  onRename: (title: string) => void
 }) {
+  const [editing, setEditing] = useState(false)
+  const [text, setText] = useState(session.title)
+  // Enter 和失焦都会触发提交，用 ref 防止重复
+  const doneRef = useRef(false)
+
+  const start = () => {
+    setText(session.title)
+    doneRef.current = false
+    setEditing(true)
+  }
+  const commit = () => {
+    if (doneRef.current) return
+    doneRef.current = true
+    setEditing(false)
+    const next = text.trim()
+    if (next && next !== session.title) onRename(next)
+  }
+  const cancel = () => {
+    doneRef.current = true
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <div className="px-4 py-2.5">
+        <input
+          autoFocus
+          className="w-full rounded-lg border border-neutral-300 px-2 py-1 text-sm outline-none focus:border-neutral-500"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commit()
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              cancel()
+            }
+          }}
+        />
+        <div className="mt-1 text-[10px] text-neutral-400">回车保存，Esc 取消</div>
+      </div>
+    )
+  }
+
   return (
     <div className={`px-4 py-2.5 ${active ? 'bg-neutral-100' : ''}`}>
       <div className="flex items-start gap-2">
@@ -79,7 +129,10 @@ function SessionRow({
         </button>
         <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
           {hits > 1 && <span className="text-[10px] text-neutral-300">{hits} 处</span>}
-          <button className="text-[11px] text-neutral-300 active:text-red-500" onClick={onDelete}>
+          <button className="text-[11px] text-neutral-400 active:text-neutral-700" onClick={start}>
+            改名
+          </button>
+          <button className="text-[11px] text-neutral-400 active:text-red-500" onClick={onDelete}>
             删除
           </button>
         </div>
@@ -94,9 +147,12 @@ export default function SessionDrawer() {
     currentId,
     turns,
     drawerOpen,
+    drawerTab,
     setDrawer,
+    setDrawerTab,
     selectSession,
     deleteSession,
+    renameSession,
     newSession,
     openSearchHit,
     error,
@@ -104,7 +160,9 @@ export default function SessionDrawer() {
   const [query, setQuery] = useState('')
   const [contentHits, setContentHits] = useState<SearchHit[]>([])
   const [searching, setSearching] = useState(false)
-  const [tab, setTab] = useState<'chats' | 'chars'>('chats')
+  // tab 放在 store 里：演示壳要能一进来就落在「寄存区」
+  const tab = drawerTab
+  const setTab = setDrawerTab
 
   const q = query.trim().toLowerCase()
 
@@ -247,6 +305,7 @@ export default function SessionDrawer() {
               hits={hitCount.get(s.id) ?? 0}
               onOpen={() => openSession(s.id)}
               onDelete={() => deleteSession(s.id)}
+              onRename={(title) => void renameSession(s.id, title)}
             />
           ))}
 
@@ -265,6 +324,7 @@ export default function SessionDrawer() {
                   hits={hits}
                   onOpen={() => openSession(s.id)}
                   onDelete={() => deleteSession(s.id)}
+              onRename={(title) => void renameSession(s.id, title)}
                 />
               ))}
             </>
@@ -280,6 +340,7 @@ export default function SessionDrawer() {
                 hits={0}
                 onOpen={() => openSession(s.id)}
                 onDelete={() => deleteSession(s.id)}
+              onRename={(title) => void renameSession(s.id, title)}
               />
             ))}
         </div>

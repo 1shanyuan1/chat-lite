@@ -1,20 +1,224 @@
 @import 'tailwindcss';
 
 html,
-body,
-#root {
+body {
   height: 100%;
+  /* 软键盘弹出时不让文档本身滚动，否则系统一平移，顶栏就跟着被顶出去 */
+  overflow: hidden;
+}
+
+/*
+ * 应用高度。
+ * 原生端由 viewport-height.ts 写 --app-height（键盘弹起时等于键盘上方的可视高度）；
+ * 其它情况退回 100dvh——不用 100%，因为 WebView 的 layout viewport 在键盘弹出时不一定跟着缩，
+ * 百分比会算成「键盘前的高度」，底部输入框就被压在键盘下面。
+ */
+#root {
+  /* 老 WebView 不认 dvh，先给一个百分比兜底，下一行不生效时会退回这里 */
+  height: 100%;
+  height: var(--app-height, 100dvh);
+  overflow: hidden;
 }
 
 body {
   margin: 0;
-  background: #ffffff;
-  color: #17171a;
+  background: var(--color-white);
+  color: var(--color-neutral-800);
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
+  /* 点击时不闪灰块，接近原生 App 的手感 */
+  -webkit-tap-highlight-color: transparent;
+  /* 横屏时不自动放大字号 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/*
+ * 消息区横向兜底。
+ * main 只允许纵向滚（overflow-x-hidden 写在 className 上）；但光裁掉还不够——
+ * 正文里会出现无空格长串（长链接、模型名、base64、贴错的日志），默认不在词内断行，
+ * 会把用户气泡和 markdown 段落撑出可视宽度，真机上聊天页就能左右拖动。
+ * anywhere 让「放不下的词」在词内断行（正常文本不受影响），会被所有后代继承，
+ * 气泡、用量行、来源标签一并覆盖。分支图的横滚在它自己的 overflow-auto 容器里，不受影响。
+ */
+main {
+  overflow-wrap: anywhere;
+}
+
+/* ---------------- 主题 ---------------- */
+/*
+ * Tailwind v4 默认用 oklch() 定义颜色。Chrome 110 以下的 WebView 不认 oklch，
+ * var(--color-neutral-900) 会整条失效——背景变透明，选中卡片直接看不见。
+ * MuMu 自带的 WebView 就是 110，真机上的老系统也可能遇到。
+ *
+ * 所以浅色主题用 sRGB 明确写一遍。这是调色板兜底，不是换设计：
+ * 数值取 Tailwind neutral / amber / emerald / red / blue 的标准色阶。
+ * 深色主题在下面覆盖同名变量。
+ */
+:root {
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  --color-neutral-50: #fafafa;
+  --color-neutral-100: #f5f5f5;
+  --color-neutral-200: #e5e5e5;
+  --color-neutral-300: #d4d4d4;
+  --color-neutral-400: #a3a3a3;
+  --color-neutral-500: #737373;
+  --color-neutral-600: #525252;
+  --color-neutral-700: #404040;
+  --color-neutral-800: #262626;
+  --color-neutral-900: #171717;
+
+  --color-amber-50: #fffbeb;
+  --color-amber-100: #fef3c7;
+  --color-amber-200: #fde68a;
+  --color-amber-300: #fcd34d;
+  --color-amber-400: #fbbf24;
+  --color-amber-600: #d97706;
+  --color-amber-700: #b45309;
+  --color-amber-800: #92400e;
+
+  --color-emerald-50: #ecfdf5;
+  --color-emerald-600: #059669;
+  --color-emerald-700: #047857;
+  --color-emerald-800: #065f46;
+
+  --color-red-50: #fef2f2;
+  --color-red-200: #fecaca;
+  --color-red-500: #ef4444;
+  --color-red-600: #dc2626;
+
+  --color-blue-600: #2563eb;
+
+  --bubble-bg: #17171a;
+  --bubble-fg: #ffffff;
+}
+
+/*
+ * Chrome 110 也不支持 color-mix()，Tailwind 的 /25、/60 这类透明度修饰
+ * 会整条失效。这几个是界面里实际用到的，单独给 rgba 兜底。
+ */
+.bg-black\/25 {
+  background-color: rgb(0 0 0 / 0.25);
+}
+.bg-white\/15 {
+  background-color: rgb(255 255 255 / 0.15);
+}
+.text-white\/50 {
+  color: rgb(255 255 255 / 0.5);
+}
+.text-white\/60 {
+  color: rgb(255 255 255 / 0.6);
+}
+.text-white\/80 {
+  color: rgb(255 255 255 / 0.8);
+}
+.ring-black\/10 {
+  --tw-ring-color: rgb(0 0 0 / 0.1);
+}
+
+/*
+ * Tailwind v4 把颜色编译成 var(--color-*)，所以换肤只要覆盖变量，
+ * 不用给每个组件加 dark: 变体。
+ *
+ * 深色是「反转中性色阶」：white 变成页面底（最深），neutral-900 变成最亮。
+ * 这样 bg-neutral-900 + text-white 的主按钮会自动变成「浅底深字」，
+ * bg-white + text-neutral-800 的正文区自动变成「深底浅字」。
+ */
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-white: #0e0e11;
+  --color-neutral-50: #17171a;
+  --color-neutral-100: #212126;
+  --color-neutral-200: #2e2e34;
+  --color-neutral-300: #44444c;
+  --color-neutral-400: #7c7c86;
+  --color-neutral-500: #9a9aa4;
+  --color-neutral-600: #b6b6bf;
+  --color-neutral-700: #cdcdd4;
+  --color-neutral-800: #e6e6ea;
+  --color-neutral-900: #f4f4f7;
+
+  --color-amber-50: #3a2a12;
+  --color-amber-300: #c08a34;
+  --color-amber-400: #d9a044;
+  --color-amber-700: #e8c078;
+  --color-amber-800: #f2d9a8;
+
+  --color-red-200: #5a2a2a;
+  --color-red-500: #f08080;
+  --color-red-600: #f4a3a3;
+
+  --color-emerald-50: #123028;
+  --color-emerald-600: #45c79c;
+  --color-emerald-700: #79ddb8;
+  --color-emerald-800: #b3efd8;
+
+  --color-blue-600: #6aa6f0;
+
+  --bubble-bg: #2b3340;
+  --bubble-fg: #eef2f8;
+}
+
+/*
+ * 直角模式：无例外全局归零——所有圆角（含胶囊、圆形按钮）全部归零，
+ * 选了直角就是整套直角，不存在有的元素受限、有的不受限。
+ * 圆形语义（头像、状态点）由使用处自行决定是否在直角下改用其它形状。
+ */
+html[data-corners='sharp'] * {
+  border-radius: 0 !important;
+}
+
+/* ---------------- 滚动条 ---------------- */
+/*
+ * 分设备处理，因为手机和电脑的「正确」不一样。
+ *
+ * 触屏（手机/平板）：不写任何规则，完全交回系统。
+ *   Android WebView 会用原生的 overlay 滚动条——无轨道、约 3dp、
+ *   只在滚动时浮出、停手约 1 秒淡出。DeepSeek 手机端就是这个样子，
+ *   因为它是原生 App，滚动条来自系统而不是自绘。
+ *
+ * 鼠标（电脑）：自绘细胶囊。
+ *   一旦自定义 ::-webkit-scrollbar，浏览器就改回「常驻」模式，
+ *   再也拿不回浮出淡出。桌面本来也该有常驻滚动条，所以这里不冲突。
+ *   12% 静置 / 30% 悬停 / 45% 按下——存在感压到最低但不至于找不到。
+ */
+@media (hover: hover) and (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(0 0 0 / 12%) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    /* 6px 布局宽度（360dp 屏只吃 1.7%），视觉上 4px（1px 透明边框收窄） */
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background-color: rgb(0 0 0 / 12%);
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(0 0 0 / 30%);
+  }
+
+  ::-webkit-scrollbar-thumb:active {
+    background-color: rgb(0 0 0 / 45%);
+  }
 }
 
 textarea,
@@ -50,13 +254,13 @@ input {
 .md code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.88em;
-  background: #f2f2f4;
+  background: var(--color-neutral-100);
   padding: 0.1em 0.32em;
   border-radius: 4px;
 }
 .md pre {
-  background: #f7f7f9;
-  border: 1px solid #e8e8ec;
+  background: var(--color-neutral-50);
+  border: 1px solid var(--color-neutral-200);
   border-radius: 10px;
   padding: 10px 12px;
   overflow-x: auto;
@@ -69,10 +273,10 @@ input {
   line-height: 1.5;
 }
 .md blockquote {
-  border-left: 3px solid #dcdce0;
+  border-left: 3px solid var(--color-neutral-200);
   margin: 0 0 0.6em;
   padding-left: 0.75em;
-  color: #5a5a60;
+  color: var(--color-neutral-500);
 }
 .md table {
   border-collapse: collapse;
@@ -81,10 +285,10 @@ input {
 }
 .md th,
 .md td {
-  border: 1px solid #e4e4e8;
+  border: 1px solid var(--color-neutral-200);
   padding: 4px 8px;
 }
 .md a {
-  color: #2563eb;
+  color: var(--color-blue-600);
   text-decoration: underline;
 }

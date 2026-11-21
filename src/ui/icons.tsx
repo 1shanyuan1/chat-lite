@@ -116,3 +116,43 @@ export function DownloadIcon({ size = 15, className }: IconProps) {
     </svg>
   )
 }
+
+export function PaperclipIcon({ size = 17, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      <path d="M20 11.5l-7.6 7.6a4.5 4.5 0 0 1-6.4-6.4l8-8a3 3 0 0 1 4.2 4.2l-8 8a1.5 1.5 0 0 1-2.1-2.1l7.3-7.3" />
+    </svg>
+  )
+}
+
+/** 蓝图：一条主线分叉成两支 */
+export function TreeIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      <circle cx="5" cy="12" r="2" />
+      <circle cx="19" cy="6" r="2" />
+      <circle cx="19" cy="18" r="2" />
+      <path d="M7 12h4a2 2 0 0 0 2-2V8a2 2 0 0 1 2-2h2" />
+      <path d="M7 12h4a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2h2" />
+    </svg>
+  )
+}
+
+/** 发送：向上的箭头，实心圆底由外层容器给 */
+export function SendIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true" strokeWidth={2}>
+      <path d="M12 19V5" />
+      <path d="M6 11l6-6 6 6" />
+    </svg>
+  )
+}
+
+/** 停止：方点，和发送同尺寸同位置 */
+export function StopIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      <rect x="7" y="7" width="10" height="10" rx="2.2" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}

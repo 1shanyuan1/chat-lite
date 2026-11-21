@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      UI 实验版入口（只在 dev 生效）：
+      npm run build 不会打包这个文件（vite 只认 index.html），APK 里也永远只有正式版。
+      浏览器打开 http://localhost:5173/ui-next.html 即可与正式版并排对照。
+      viewport 参数与 index.html 完全一致，保证键盘/安全区行为可比。
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <title>Chat Lite · UI 实验版</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/ui-next/main.tsx"></script>
+  </body>
+</html>
