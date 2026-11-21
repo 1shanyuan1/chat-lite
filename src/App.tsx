@@ -783,7 +783,7 @@ function MemorySection({
         <span className="min-w-0 pr-2">
           <span className="block text-sm text-neutral-800">长记忆</span>
           <span className="mt-0.5 block text-[10px] leading-relaxed text-neutral-400">
-            只在极简模式生效。它会自己记下关于你的事，回答时只给成品。
+            只在极简模式生效。聊到值得记的事它自己会记，赞 / 踩可以纠偏。
           </span>
         </span>
         <span
@@ -848,7 +848,7 @@ function MemorySection({
 
       {open && (
         <pre className="mb-1 whitespace-pre-wrap break-words rounded-lg bg-neutral-50 p-2.5 text-[11px] leading-relaxed text-neutral-600">
-          {profile.trim() || '还没有画像。赞或踩几条、写上原因，它就会开始记。'}
+          {profile.trim() || '还没有画像。聊到值得记的事，它就会开始记。'}
         </pre>
       )}
 
@@ -913,6 +913,15 @@ function SettingsSheet() {
   const [error, setError] = useState<string | null>(null)
   const [providerOpen, setProviderOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [savedFlash, setSavedFlash] = useState(false)
+  /** 草稿与已存配置不同 → 显示悬浮小保存 */
+  const dirty = JSON.stringify(draft) !== JSON.stringify(config)
+  /** 开关/胶囊类改一项存一项，不用滚到底 */
+  const instantSave = (patch: Partial<ChatConfig>) => {
+    const next = { ...draft, ...patch }
+    setDraft(next)
+    saveConfig(next)
+  }
 
   const provider = findProvider(draft.baseUrl)
   const protocol = resolveProtocol(draft.protocol, draft.baseUrl)
@@ -950,15 +959,24 @@ function SettingsSheet() {
     if (hit?.contextLength) setDraft((prev) => ({ ...prev, contextLimit: hit.contextLength }))
   }, [models, draft.model, draft.contextLimit])
 
+  // 打开设置时同步草稿并拉缓存模型；打开后 config 变化只跟随草稿
+  // （外观/开关都是即时保存，config 会跟着变，不能在这里重复拉模型）
+  const wasOpen = useRef(false)
   useEffect(() => {
-    if (!settingsOpen) return
+    if (!settingsOpen) {
+      wasOpen.current = false
+      return
+    }
+    if (!wasOpen.current) {
+      wasOpen.current = true
+      setError(null)
+      setProviderOpen(false)
+      const cached = loadCachedModels(config.baseUrl, resolveProtocol(config.protocol, config.baseUrl))
+      setModels(cached ?? [])
+      const current = findProvider(config.baseUrl)
+      if (current?.supportsModelList !== false && !cached && config.apiKey) void load(config)
+    }
     setDraft(config)
-    setError(null)
-    setProviderOpen(false)
-    const cached = loadCachedModels(config.baseUrl, resolveProtocol(config.protocol, config.baseUrl))
-    setModels(cached ?? [])
-    const current = findProvider(config.baseUrl)
-    if (current?.supportsModelList !== false && !cached && config.apiKey) void load(config)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen, config])
 
@@ -1089,7 +1107,7 @@ function SettingsSheet() {
                   ? 'border-neutral-900 bg-neutral-900 text-white'
                   : 'border-neutral-200 text-neutral-600'
               }`}
-              onClick={() => setDraft({ ...draft, searchSource: value })}
+              onClick={() => instantSave({ searchSource: value })}
             >
               {label}
             </button>
@@ -1212,6 +1230,7 @@ function SettingsSheet() {
                 const next = { ...draft, protocol: key }
                 setDraft(next)
                 setModels(loadCachedModels(next.baseUrl, resolveProtocol(key, next.baseUrl)) ?? [])
+                saveConfig(next)
               }}
             >
               {label}
@@ -1309,7 +1328,7 @@ function SettingsSheet() {
         <div className="mb-1 mt-4 border-t border-neutral-100 pt-3 text-xs text-neutral-500">写作</div>
         <button
           className="mb-1 flex w-full items-center justify-between rounded-lg border border-neutral-200 px-3 py-2 text-left"
-          onClick={() => setDraft({ ...draft, settingEvolution: !draft.settingEvolution })}
+          onClick={() => instantSave({ settingEvolution: !draft.settingEvolution })}
         >
           <span className="min-w-0 pr-2">
             <span className="block text-sm text-neutral-800">设定发展模式</span>
@@ -1355,33 +1374,40 @@ function SettingsSheet() {
         <div className="mb-1 mt-4 border-t border-neutral-100 pt-3 text-xs text-neutral-500">记忆</div>
         <MemorySection
           value={Boolean(draft.longMemory)}
-          onChange={(v) => setDraft({ ...draft, longMemory: v })}
+          onChange={(v) => {
+            // 打开长记忆时顺手把思考档位带到中间档（记忆整理要靠推理）；用户已设过档位就不动
+            if (v && !draft.longMemory && (!draft.reasoningLevel || draft.reasoningLevel === 'off')) {
+              const protocol = resolveProtocol(draft.protocol, draft.baseUrl)
+              const efforts = reasoningEfforts(protocol, draft.baseUrl, draft.model, models.find((m) => m.id === draft.model))
+              const level = efforts.some((e) => e.id === 'high') ? 'high' : undefined
+              instantSave(level ? { longMemory: v, reasoningLevel: level } : { longMemory: v })
+              return
+            }
+            instantSave({ longMemory: v })
+          }}
           budget={draft.memoryBudget}
           onBudgetChange={(n) => setDraft({ ...draft, memoryBudget: n })}
         />
 
-        <button
-          className="w-full rounded-xl bg-neutral-900 py-3 text-sm text-white"
-          onClick={() => {
-            let next = draft
-            // 记忆要不要记、记什么都要推理，打开时默认把思考设到中间档（用户仍可关）
-            if (draft.longMemory && !config.longMemory) {
-              const protocol = resolveProtocol(draft.protocol, draft.baseUrl)
-              const efforts = reasoningEfforts(protocol, draft.baseUrl, draft.model, models.find((m) => m.id === draft.model))
-              const level = efforts.some((e) => e.id === 'high') ? 'high' : undefined
-              if (level && (!next.reasoningLevel || next.reasoningLevel === 'off')) {
-                next = { ...next, reasoningLevel: level }
-              }
-            }
-            saveConfig(next)
-            setSettings(false)
-          }}
-        >
-          保存
-        </button>
         <p className="mt-3 text-center text-[11px] leading-relaxed text-neutral-400">
           Key 只保存在本机，请求直连你填写的接口，不经过任何中转
         </p>
+
+        {/* 悬浮小保存：有未保存的修改时钉在底部，不用滚回最下面 */}
+        {dirty && (
+          <div className="sticky bottom-0 -mx-5 mt-5 border-t border-neutral-100 bg-white px-5 pb-[max(14px,env(safe-area-inset-bottom))] pt-3">
+            <button
+              className="w-full rounded-xl bg-neutral-900 py-3 text-sm text-white"
+              onClick={() => {
+                saveConfig(draft)
+                setSavedFlash(true)
+                setTimeout(() => setSavedFlash(false), 1600)
+              }}
+            >
+              {savedFlash ? '已保存 ✓' : '保存修改'}
+            </button>
+          </div>
+        )}
 
         {/* 关于页入口：整块可点，正文在 src/ui/about-text.ts */}
         <button
