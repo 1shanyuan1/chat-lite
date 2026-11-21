@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><title>图标导出助手</title></head>
+<body>
+<script>
+'use strict';
+// 用法：export.html?src=icon-b.svg
+// window.renderAt({ size, scale, bg }) → PNG dataURL
+//   size: 输出边长 px；scale: 内容缩放（1=原满幅）；bg: 背景色，null=透明
+const src = new URLSearchParams(location.search).get('src') || './icon-b.svg';
+const img = new Image();
+img.src = src;
+(async () => {
+  await img.decode();
+  window.renderAt = async ({ size = 512, scale = 1, bg = null } = {}) => {
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, size, size); }
+    const w = size * scale;
+    ctx.drawImage(img, (size - w) / 2, (size - w) / 2, w, w);
+    return c.toDataURL('image/png');
+  };
+  window.ready = true;
+  document.title = 'export-ready';
+})();
+</script>
+</body>
+</html>

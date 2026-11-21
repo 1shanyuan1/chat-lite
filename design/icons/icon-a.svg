@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- A · 对称堆叠：上条黑底白眼（AI 脸），下条黑框白底黑圆点（正在输入） -->
+  <g>
+    <rect x="172" y="97" width="680" height="370" rx="100" fill="#111111"/>
+    <rect x="321" y="192" width="110" height="180" rx="55" fill="#ffffff"/>
+    <rect x="593" y="192" width="110" height="180" rx="55" fill="#ffffff"/>
+  </g>
+  <g>
+    <rect x="188" y="557" width="680" height="370" rx="100" fill="#ffffff" stroke="#111111" stroke-width="28"/>
+    <circle cx="432" cy="742" r="36" fill="#111111"/>
+    <circle cx="512" cy="742" r="36" fill="#111111"/>
+    <circle cx="592" cy="742" r="36" fill="#111111"/>
+  </g>
+</svg>

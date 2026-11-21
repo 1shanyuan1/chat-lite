@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 实验版 C · 拼色标志：黑条改四渠道色竖条拼贴，其余保持黑白 -->
+  <defs>
+    <clipPath id="topbar">
+      <path d="M 90,0 H 770 V 340 Q 770,440 670,440 H 190 Q 90,440 90,340 Z"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#topbar)">
+    <rect x="90" y="0" width="170" height="440" fill="#3B82F6"/>
+    <rect x="260" y="0" width="170" height="440" fill="#8B5CF6"/>
+    <rect x="430" y="0" width="170" height="440" fill="#F59E0B"/>
+    <rect x="600" y="0" width="170" height="440" fill="#22C55E"/>
+  </g>
+  <rect x="239" y="130" width="110" height="180" rx="55" fill="#ffffff"/>
+  <rect x="511" y="130" width="110" height="180" rx="55" fill="#ffffff"/>
+  <path d="M 300,1024 V 684 Q 300,584 400,584 H 880 Q 980,584 980,684 V 1024" fill="#ffffff" stroke="#111111" stroke-width="28"/>
+  <circle cx="470" cy="835" r="56" fill="#111111"/>
+  <circle cx="640" cy="835" r="56" fill="#111111"/>
+  <circle cx="810" cy="835" r="56" fill="#111111"/>
+</svg>

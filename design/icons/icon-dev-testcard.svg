@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 实验版 B · 测试卡底：四色浅块拼贴打底，黑色标志居中 -->
+  <rect x="0" y="0" width="512" height="512" fill="#DBEAFE"/>
+  <rect x="512" y="0" width="512" height="512" fill="#EDE9FE"/>
+  <rect x="0" y="512" width="512" height="512" fill="#FEF3C7"/>
+  <rect x="512" y="512" width="512" height="512" fill="#DCFCE7"/>
+  <g transform="translate(205,205) scale(0.6)" fill="#111111">
+    <path d="M 90,0 H 770 V 340 Q 770,440 670,440 H 190 Q 90,440 90,340 Z"/>
+    <rect x="239" y="130" width="110" height="180" rx="55" fill="#ffffff"/>
+    <rect x="511" y="130" width="110" height="180" rx="55" fill="#ffffff"/>
+    <path d="M 300,1024 V 684 Q 300,584 400,584 H 880 Q 980,584 980,684 V 1024" fill="#ffffff" stroke="#111111" stroke-width="28"/>
+    <circle cx="470" cy="835" r="56"/>
+    <circle cx="640" cy="835" r="56"/>
+    <circle cx="810" cy="835" r="56"/>
+  </g>
+</svg>

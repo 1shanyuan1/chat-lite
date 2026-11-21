@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>涂鸦板 · 画给 AI 看的草图</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; flex-direction: column;
+    font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #f4f4f3; color: #2b2b2b;
+  }
+  header { padding: 10px 16px 8px; background: #fff; border-bottom: 1px solid #e7e5e2; }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  header p { margin: 2px 0 0; font-size: 12px; color: #9b9691; }
+  main { flex: 1; display: grid; place-items: center; padding: 12px; min-height: 0; }
+  #stage { position: relative; }
+  #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 14px; }
+  #guide { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.07); }
+  #draw { touch-action: none; cursor: crosshair; }
+  footer {
+    background: #fff; border-top: 1px solid #e7e5e2; padding: 10px 14px;
+    display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: center;
+  }
+  .group { display: flex; align-items: center; gap: 6px; }
+  .label { font-size: 12px; color: #8a8580; }
+  button {
+    font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px;
+    border: 1px solid #d9d5d0; background: #fff; cursor: pointer; color: inherit;
+  }
+  button:hover { background: #f3f1ee; }
+  button.on { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+  button.primary { background: #2f6fed; border-color: #2f6fed; color: #fff; font-weight: 600; }
+  button.primary:hover { background: #2a63d4; }
+  .swatch { width: 22px; height: 22px; border-radius: 50%; padding: 0; border: 2px solid #fff; outline: 1px solid #d9d5d0; }
+  .swatch.on { outline: 2px solid #2f6fed; }
+  input[type=range] { width: 110px; accent-color: #2f6fed; }
+  #name { font: inherit; font-size: 13px; padding: 6px 10px; border: 1px solid #d9d5d0; border-radius: 8px; width: 150px; }
+  #status { font-size: 12px; color: #8a8580; max-width: 260px; }
+  #status.err { color: #d13438; }
+  #history { display: flex; gap: 6px; flex-wrap: wrap; max-width: 320px; }
+  #history span { font-size: 11px; color: #9b9691; background: #f3f1ee; border-radius: 6px; padding: 3px 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>涂鸦板</h1>
+  <p>随手画个大概就行，不用画得像 —— AI 会看图，再听你描述，帮你画成正式的图标 / Logo。</p>
+</header>
+<main><div id="stage">
+  <canvas id="guide" width="1024" height="1024"></canvas>
+  <canvas id="draw" width="1024" height="1024"></canvas>
+</div></main>
+<footer>
+  <div class="group" id="colors">
+    <button class="swatch on" data-color="#26221e" style="background:#26221e" title="黑"></button>
+    <button class="swatch" data-color="#e5484d" style="background:#e5484d" title="红"></button>
+    <button class="swatch" data-color="#3b82f6" style="background:#3b82f6" title="蓝"></button>
+    <button class="swatch" data-color="#f5a623" style="background:#f5a623" title="黄"></button>
+  </div>
+  <div class="group"><span class="label">粗细</span><input id="size" type="range" min="2" max="30" value="6" /><span class="label" id="sizeVal">6</span></div>
+  <div class="group">
+    <button id="eraser">橡皮</button>
+    <button id="mirror" title="左右对称，画 Logo 特别好用">左右镜像</button>
+    <button id="guides" class="on" title="图标常用的构图参考线，不会被保存">参考线</button>
+    <button id="undo">撤销</button>
+    <button id="clear">清空</button>
+  </div>
+  <div class="group">
+    <input id="name" maxlength="40" placeholder="名字（可选）" />
+    <button id="save" class="primary">保存 ✔</button>
+  </div>
+  <span id="status">就绪</span>
+  <div id="history"></div>
+</footer>
+<script>
+'use strict';
+const SIZE = 1024;
+const $ = id => document.getElementById(id);
+const guideC = $('guide'), drawC = $('draw');
+const dctx = drawC.getContext('2d');
+const statusEl = $('status'), historyEl = $('history'), nameInput = $('name');
+
+let strokes = [];        // { color, size, erase, mirrored, pts:[{x,y}] }
+let color = '#26221e';
+let penSize = 6;
+let eraser = false;
+let mirror = false;
+let showGuides = true;
+let serverSave = false;  // 由小服务器托管时直接存到 design/sketches/
+let dirHandle = null;    // 直接双击打开时的文件夹授权（Edge/Chrome）
+let live = null;
+
+/* ---------- 画布随窗口缩放 ---------- */
+function fitStage() {
+  const main = document.querySelector('main');
+  const s = Math.max(280, Math.min(main.clientWidth - 24, main.clientHeight - 24));
+  const stage = $('stage');
+  stage.style.width = s + 'px';
+  stage.style.height = s + 'px';
+}
+window.addEventListener('resize', fitStage);
+fitStage();
+
+/* ---------- 参考线 ---------- */
+function drawGuides() {
+  const g = guideC.getContext('2d');
+  g.clearRect(0, 0, SIZE, SIZE);
+  if (!showGuides) return;
+  g.save();
+  g.strokeStyle = '#e3e0db';
+  g.lineWidth = 2;
+  g.setLineDash([6, 8]);
+  g.strokeRect(96, 96, SIZE - 192, SIZE - 192);                    // 方形安全区
+  g.beginPath(); g.arc(SIZE / 2, SIZE / 2, SIZE / 2 - 96, 0, Math.PI * 2); g.stroke(); // 圆形安全区
+  g.strokeStyle = '#eceae6';
+  g.lineWidth = 1.5;
+  g.beginPath();
+  g.moveTo(SIZE / 2, 0); g.lineTo(SIZE / 2, SIZE);
+  g.moveTo(0, SIZE / 2); g.lineTo(SIZE, SIZE / 2);
+  g.stroke();
+  g.beginPath(); g.arc(SIZE / 2, SIZE / 2, 24, 0, Math.PI * 2); g.stroke();
+  g.restore();
+}
+
+/* ---------- 笔画渲染 ---------- */
+function withStroke(ctx, s, fn) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.globalCompositeOperation = s.erase ? 'destination-out' : 'source-over';
+  ctx.strokeStyle = ctx.fillStyle = s.color;
+  const lw = s.erase ? s.size * 2.2 : s.size;
+  ctx.lineWidth = lw;
+  if (s.mirrored) { ctx.translate(SIZE, 0); ctx.scale(-1, 1); }
+  fn(ctx, lw);
+  ctx.restore();
+}
+function dot(ctx, p, r) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
+function seg(ctx, a, ctrl, b) {
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo(ctrl.x, ctrl.y, b.x, b.y); ctx.stroke();
+}
+function drawPath(ctx, pts, lw) {
+  dot(ctx, pts[0], Math.max(lw / 2, 0.6));
+  if (pts.length === 1) return;
+  let prev = pts[0], mid = pts[0];
+  for (let i = 1; i < pts.length; i++) {
+    const m = { x: (prev.x + pts[i].x) / 2, y: (prev.y + pts[i].y) / 2 };
+    seg(ctx, mid, prev, m);
+    mid = m; prev = pts[i];
+  }
+  seg(ctx, mid, prev, pts[pts.length - 1]);
+}
+function paintStroke(s) { withStroke(dctx, s, (ctx, lw) => drawPath(ctx, s.pts, lw)); }
+function replay() {
+  dctx.clearRect(0, 0, SIZE, SIZE);
+  for (const s of strokes) paintStroke(s);
+}
+
+/* ---------- 手绘 ---------- */
+function toPt(e) {
+  const r = drawC.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * SIZE / r.width, y: (e.clientY - r.top) * SIZE / r.height };
+}
+drawC.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  try { drawC.setPointerCapture(e.pointerId); } catch {}
+  const s = { color, size: penSize, erase: eraser, mirrored: mirror, pts: [toPt(e)] };
+  live = { s, last: s.pts[0], lastMid: s.pts[0] };
+  withStroke(dctx, s, (ctx, lw) => dot(ctx, s.pts[0], Math.max(lw / 2, 0.6)));
+});
+drawC.addEventListener('pointermove', e => {
+  if (!live) return;
+  const p = toPt(e);
+  const mid = { x: (live.last.x + p.x) / 2, y: (live.last.y + p.y) / 2 };
+  withStroke(dctx, live.s, ctx => seg(ctx, live.lastMid, live.last, mid));
+  live.lastMid = mid; live.last = p;
+  live.s.pts.push(p);
+});
+function endStroke() {
+  if (!live) return;
+  strokes.push(live.s);
+  live = null;
+}
+drawC.addEventListener('pointerup', endStroke);
+drawC.addEventListener('pointercancel', endStroke);
+
+/* ---------- 工具栏 ---------- */
+$('colors').addEventListener('click', e => {
+  const b = e.target.closest('.swatch');
+  if (!b) return;
+  color = b.dataset.color;
+  eraser = false;
+  $('eraser').classList.remove('on');
+  for (const el of $('colors').children) el.classList.toggle('on', el === b);
+});
+$('size').addEventListener('input', e => { penSize = +e.target.value; $('sizeVal').textContent = e.target.value; });
+$('eraser').addEventListener('click', () => { eraser = !eraser; $('eraser').classList.toggle('on', eraser); });
+$('mirror').addEventListener('click', () => { mirror = !mirror; $('mirror').classList.toggle('on', mirror); });
+$('guides').addEventListener('click', () => { showGuides = !showGuides; $('guides').classList.toggle('on', showGuides); drawGuides(); });
+$('undo').addEventListener('click', () => { strokes.pop(); replay(); });
+$('clear').addEventListener('click', () => {
+  if (strokes.length && !confirm('清空画布？')) return;
+  strokes = []; replay();
+});
+
+/* ---------- 保存 ---------- */
+function setStatus(text, err) {
+  statusEl.textContent = text;
+  statusEl.classList.toggle('err', !!err);
+}
+function stamp() {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+function exportBlob() {
+  const out = document.createElement('canvas');
+  out.width = out.height = SIZE;
+  const c = out.getContext('2d');
+  c.fillStyle = '#fff';
+  c.fillRect(0, 0, SIZE, SIZE);
+  c.drawImage(drawC, 0, 0);
+  return new Promise(res => out.toBlob(res, 'image/png'));
+}
+function markSaved(file) {
+  setStatus('已保存 ' + file);
+  const el = document.createElement('span');
+  el.textContent = file;
+  historyEl.prepend(el);
+  while (historyEl.children.length > 6) historyEl.lastChild.remove();
+  nameInput.value = '';
+}
+async function save() {
+  if (!strokes.length && !live) { setStatus('先画点什么吧'); return; }
+  const btn = $('save');
+  btn.disabled = true;
+  setStatus('正在保存…');
+  try {
+    const blob = await exportBlob();
+    const raw = (nameInput.value || '').trim();
+    const safe = raw.replace(/[\\/:*?"<>|#%&{}$!'`+@ ]+/g, '-').replace(/^[-.]+/, '').slice(0, 40);
+    const filename = `${safe ? safe + '-' : 'sketch-'}${stamp()}.png`;
+    if (serverSave) {
+      const r = await fetch('/api/save?name=' + encodeURIComponent(filename), { method: 'POST', body: blob });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      markSaved(j.file);
+    } else if (window.showDirectoryPicker) {
+      if (!dirHandle) dirHandle = await window.showDirectoryPicker({ id: 'sketch-out', mode: 'readwrite', startIn: 'documents' });
+      if (await dirHandle.requestPermission({ mode: 'readwrite' }) !== 'granted') throw new Error('没有文件夹写入权限');
+      const fh = await dirHandle.getFileHandle(filename, { create: true });
+      const w = await fh.createWritable();
+      await w.write(blob);
+      await w.close();
+      markSaved(filename + '（所选文件夹）');
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      markSaved(filename + '（已下载）');
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') setStatus('已取消');
+    else { setStatus('保存失败：' + (err.message || err), true); console.error(err); }
+  } finally {
+    btn.disabled = false;
+  }
+}
+$('save').addEventListener('click', save);
+nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+window.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); strokes.pop(); replay(); }
+});
+
+/* ---------- 启动：探测小服务器 ---------- */
+(async () => {
+  try {
+    const r = await fetch('/api/ping', { cache: 'no-store' });
+    serverSave = r.ok;
+  } catch { serverSave = false; }
+  if (serverSave) {
+    setStatus('就绪（保存到 design/sketches/）');
+    try {
+      const r = await fetch('/api/list', { cache: 'no-store' });
+      const j = await r.json();
+      for (const f of (j.files || []).slice(0, 6)) {
+        const el = document.createElement('span');
+        el.textContent = f;
+        historyEl.appendChild(el);
+      }
+    } catch {}
+  } else if (window.showDirectoryPicker) {
+    setStatus('就绪（首次保存时选一个文件夹）');
+  } else {
+    setStatus('就绪（保存 = 下载图片）');
+  }
+})();
+drawGuides();
+</script>
+</body>
+</html>

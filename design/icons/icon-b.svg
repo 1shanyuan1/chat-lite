@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- B · 错位：上条从顶边直角伸出（顶部不圆角），下条从底边伸出（底部不封框） -->
+  <g>
+    <path d="M 90,0 H 770 V 340 Q 770,440 670,440 H 190 Q 90,440 90,340 Z" fill="#111111"/>
+    <rect x="239" y="130" width="110" height="180" rx="55" fill="#ffffff"/>
+    <rect x="511" y="130" width="110" height="180" rx="55" fill="#ffffff"/>
+  </g>
+  <g>
+    <path d="M 300,1024 V 684 Q 300,584 400,584 H 880 Q 980,584 980,684 V 1024" fill="#ffffff" stroke="#111111" stroke-width="28"/>
+    <circle cx="470" cy="835" r="56" fill="#111111"/>
+    <circle cx="640" cy="835" r="56" fill="#111111"/>
+    <circle cx="810" cy="835" r="56" fill="#111111"/>
+  </g>
+</svg>

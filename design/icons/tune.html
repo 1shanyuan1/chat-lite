@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>圆点微调 · chat-lite</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f4f4f3; color: #2b2b2b; margin: 0; min-height: 100vh; display: flex; gap: 26px; justify-content: center; align-items: flex-start; padding: 30px; }
+  .stage { background: #fff; border-radius: 14px; box-shadow: 0 2px 10px rgba(0,0,0,.07); padding: 26px; text-align: center; }
+  #big svg { width: 440px; height: auto; display: block; }
+  .small { display: flex; gap: 18px; align-items: flex-end; justify-content: center; margin-top: 16px; }
+  .small .mid svg { width: 72px; height: auto; }
+  .small .mini svg { width: 34px; height: auto; }
+  .panel { background: #fff; border-radius: 14px; box-shadow: 0 2px 10px rgba(0,0,0,.07); padding: 26px; width: 320px; display: flex; flex-direction: column; gap: 20px; }
+  h1 { font-size: 15px; margin: 0; }
+  .ctl label { font-size: 13px; display: flex; justify-content: space-between; margin-bottom: 6px; color: #55504b; }
+  .ctl label span { color: #2f6fed; font-weight: 600; }
+  .ctl input[type=range] { width: 100%; accent-color: #2f6fed; }
+  #readout { font-size: 12px; color: #8a8580; line-height: 1.6; }
+  button { font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 8px; border: 1px solid #d9d5d0; background: #fff; cursor: pointer; }
+  button.primary { background: #2f6fed; border-color: #2f6fed; color: #fff; font-weight: 600; }
+  #status { font-size: 12px; color: #8a8580; word-break: break-all; }
+  #status.err { color: #d13438; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div id="big"></div>
+    <div class="small"><div class="mid" id="mid"></div><div class="mini" id="mini"></div></div>
+  </div>
+  <div class="panel">
+    <h1>圆点微调</h1>
+    <div class="ctl">
+      <label>点大小 · 半径 <span id="v-r"></span></label>
+      <input id="r" type="range" min="20" max="80" step="1" value="46" />
+    </div>
+    <div class="ctl">
+      <label>点高度 · 在条里的位置 <span id="v-y"></span></label>
+      <input id="y" type="range" min="30" max="75" step="1" value="50" />
+    </div>
+    <div class="ctl">
+      <label>点间距 · 中心距一半 <span id="v-d"></span></label>
+      <input id="d" type="range" min="60" max="170" step="1" value="112" />
+    </div>
+    <div id="readout"></div>
+    <button id="reset">重置为当前版</button>
+    <button id="save" class="primary">保存给我看 ✔</button>
+    <span id="status">调好后点保存，文件名会带上参数，AI 读图就能精确复刻</span>
+  </div>
+<script>
+'use strict';
+const BAR_TOP = 584, BAR_H = 440, CX = 640;
+const DEFAULTS = { r: 46, y: 50, d: 112 };
+const P = { r: 46, y: 50, d: 112 };
+
+const TOP_BAR  = '<path d="M 90,0 H 770 V 340 Q 770,440 670,440 H 190 Q 90,440 90,340 Z" fill="#111111"/>';
+const EYES     = '<rect x="239" y="130" width="110" height="180" rx="55" fill="#ffffff"/>'
+               + '<rect x="511" y="130" width="110" height="180" rx="55" fill="#ffffff"/>';
+const BOTTOM   = '<path d="M 300,1024 V 684 Q 300,584 400,584 H 880 Q 980,584 980,684 V 1024" fill="#ffffff" stroke="#111111" stroke-width="28"/>';
+
+function svgCode() {
+  const cy = Math.round(BAR_TOP + BAR_H * P.y / 100);
+  const dots = [CX - P.d, CX, CX + P.d]
+    .map(cx => `<circle cx="${cx}" cy="${cy}" r="${P.r}" fill="#111111"/>`).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">${TOP_BAR}${EYES}${BOTTOM}${dots}</svg>`;
+}
+function render() {
+  const code = svgCode();
+  for (const id of ['big', 'mid', 'mini']) document.getElementById(id).innerHTML = code;
+  document.getElementById('v-r').textContent = P.r + ' px';
+  document.getElementById('v-y').textContent = P.y + '%（cy=' + Math.round(BAR_TOP + BAR_H * P.y / 100) + '）';
+  document.getElementById('v-d').textContent = P.d + ' px（中心距 ' + P.d * 2 + '）';
+  document.getElementById('readout').textContent = `当前参数：r=${P.r}，y=${P.y}%，d=${P.d}（中心距 ${P.d * 2}）`;
+}
+function stamp() {
+  const t = new Date(), p = n => String(n).padStart(2, '0');
+  return `${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}-${p(t.getHours())}${p(t.getMinutes())}${p(t.getSeconds())}`;
+}
+for (const key of ['r', 'y', 'd']) {
+  document.getElementById(key).addEventListener('input', e => { P[key] = +e.target.value; render(); });
+}
+document.getElementById('reset').addEventListener('click', () => {
+  Object.assign(P, DEFAULTS);
+  for (const key of ['r', 'y', 'd']) document.getElementById(key).value = DEFAULTS[key];
+  render();
+});
+document.getElementById('save').addEventListener('click', async () => {
+  const btn = document.getElementById('save');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.textContent = '正在保存…';
+  status.classList.remove('err');
+  try {
+    const blob = new Blob([svgCode()], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    const c = document.createElement('canvas');
+    c.width = c.height = 1024;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 1024, 1024);
+    ctx.drawImage(img, 0, 0, 1024, 1024);
+    URL.revokeObjectURL(url);
+    const png = await new Promise(res => c.toBlob(res, 'image/png'));
+    const name = `圆点-r${P.r}-y${P.y}-d${P.d}-${stamp()}.png`;
+    const resp = await fetch('/api/save?name=' + encodeURIComponent(name), { method: 'POST', body: png });
+    const j = await resp.json();
+    if (!resp.ok || !j.ok) throw new Error(j.error || 'HTTP ' + resp.status);
+    status.textContent = '已保存 ' + j.file;
+  } catch (err) {
+    status.textContent = '保存失败：' + (err.message || err);
+    status.classList.add('err');
+  } finally {
+    btn.disabled = false;
+  }
+});
+render();
+</script>
+</body>
+</html>

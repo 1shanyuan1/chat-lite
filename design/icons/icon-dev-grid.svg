@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 实验版 A · 四宫格重复拼贴：完整标志按四渠道色重复四份 -->
+  <defs>
+    <g id="mark" fill="currentColor">
+      <path d="M 90,0 H 770 V 340 Q 770,440 670,440 H 190 Q 90,440 90,340 Z"/>
+      <rect x="239" y="130" width="110" height="180" rx="55" fill="#ffffff"/>
+      <rect x="511" y="130" width="110" height="180" rx="55" fill="#ffffff"/>
+      <path d="M 300,1024 V 684 Q 300,584 400,584 H 880 Q 980,584 980,684 V 1024" fill="none" stroke="currentColor" stroke-width="28"/>
+      <circle cx="470" cy="835" r="56"/>
+      <circle cx="640" cy="835" r="56"/>
+      <circle cx="810" cy="835" r="56"/>
+    </g>
+  </defs>
+  <use href="#mark" color="#3B82F6" transform="translate(30.7,30.7) scale(0.44)"/>
+  <use href="#mark" color="#8B5CF6" transform="translate(542.7,30.7) scale(0.44)"/>
+  <use href="#mark" color="#F59E0B" transform="translate(30.7,542.7) scale(0.44)"/>
+  <use href="#mark" color="#22C55E" transform="translate(542.7,542.7) scale(0.44)"/>
+</svg>
