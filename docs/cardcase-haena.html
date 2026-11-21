@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>寄存区案例 · Haena（V2 卡）</title>
+<style>
+  :root {
+    --bg: #f4f4f5;
+    --card: #ffffff;
+    --line: #e8e8ea;
+    --line-soft: #f2f2f4;
+    --ink: #262626;
+    --ink-2: #525252;
+    --ink-3: #737373;
+    --ink-4: #a3a3a3;
+    --chip: #f5f5f5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 40px 20px 72px; }
+  .eyebrow { font-size: 11px; letter-spacing: .08em; color: var(--ink-4); text-transform: uppercase; }
+  h1 { font-size: 26px; font-weight: 500; margin: 6px 0 4px; letter-spacing: -.01em; }
+  .sub { font-size: 12px; color: var(--ink-3); margin: 0; }
+  .sub code { font-size: 11px; background: var(--chip); padding: 1px 5px; border-radius: 4px; }
+  .notice {
+    margin-top: 18px; padding: 10px 14px; border-radius: 10px;
+    background: #fffaf0; border: 0.5px solid #f2d9a8; color: #854f0b;
+    font-size: 12px; line-height: 1.7;
+  }
+  .cols { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 28px; margin-top: 30px; align-items: start; }
+  @media (max-width: 880px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+
+  .panel-title { font-size: 13px; font-weight: 500; color: var(--ink-2); margin: 0 0 10px; }
+  .panel-hint { font-size: 11px; color: var(--ink-4); margin: 8px 2px 0; }
+
+  .phone {
+    width: 380px; max-width: 100%; background: var(--card); border-radius: 20px;
+    border: 0.5px solid var(--line); overflow: hidden;
+  }
+  .phone-head {
+    padding: 10px 14px 8px; border-bottom: 0.5px solid var(--line-soft);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .phone-head span { font-size: 12px; color: var(--ink-3); }
+  .phone-head b { font-size: 13px; font-weight: 500; color: var(--ink); }
+
+  .row { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 0.5px solid var(--line-soft); }
+  .avatar {
+    width: 36px; height: 36px; border-radius: 8px; flex: none;
+    background: var(--chip); color: var(--ink-4);
+    display: flex; align-items: center; justify-content: center; font-size: 11px;
+  }
+  .row-main { min-width: 0; flex: 1; }
+  .name-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .name { font-size: 13px; color: #1f1f1f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tag {
+    flex: none; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    background: var(--chip); color: var(--ink-3); font-size: 9px; padding: 1px 4px; border-radius: 3px;
+  }
+  .summary {
+    display: block; font-size: 10px; color: var(--ink-3); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .redacted {
+    display: block; font-size: 10px; color: var(--ink-4); margin-top: 2px;
+    background: repeating-linear-gradient(90deg, #f4f4f5 0 6px, #ececee 6px 12px);
+    border-radius: 3px; padding: 1px 6px; width: fit-content;
+  }
+  .meta { display: block; font-size: 10px; color: var(--ink-4); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .del { flex: none; font-size: 11px; color: #d4d4d4; }
+
+  .card-box { background: var(--card); border: 0.5px solid var(--line); border-radius: 14px; padding: 16px; }
+  .info { background: #fafafa; border-radius: 10px; padding: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+  .chip {
+    background: #fff; border: 0.5px solid #e5e5e5; color: var(--ink-3);
+    font-size: 9px; padding: 1px 6px; border-radius: 3px;
+  }
+  .chip.spec { color: #404040; }
+  .facts { font-size: 10px; color: var(--ink-4); margin: 4px 0 0; }
+  .notes { margin-top: 6px; font-size: 10px; color: var(--ink-4); }
+  .notes p { margin: 4px 0 0; font-size: 10px; color: var(--ink-3); line-height: 1.7; }
+  .field-label { font-size: 11px; color: var(--ink-3); margin: 0 0 4px; }
+  .input-mock {
+    border: 0.5px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; color: var(--ink);
+    margin-bottom: 12px;
+  }
+  .textarea-mock {
+    border: 0.5px solid var(--line); border-radius: 8px; padding: 8px 10px; height: 58px;
+    background: repeating-linear-gradient(180deg, #fff 0 20px, #fafafa 20px 21px);
+    margin-bottom: 14px;
+  }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; font-size: 11.5px; border-bottom: 0.5px solid var(--line-soft); vertical-align: top; }
+  th { background: #fafafa; color: var(--ink-3); font-weight: 500; font-size: 11px; }
+  td:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #404040; white-space: nowrap; }
+  td.dim { color: var(--ink-4); }
+  tr:last-child td { border-bottom: none; }
+
+  .findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 12px; }
+  .finding { background: var(--card); border: 0.5px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .finding b { display: block; font-size: 12px; font-weight: 500; margin-bottom: 3px; }
+  .finding span { font-size: 11px; color: var(--ink-3); line-height: 1.7; }
+  h2 { font-size: 14px; font-weight: 500; margin: 40px 0 10px; }
+  footer { margin-top: 40px; padding-top: 16px; border-top: 0.5px solid var(--line); font-size: 11px; color: var(--ink-4); line-height: 1.8; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">寄存区 · 真实卡片案例</div>
+  <h1>Haena</h1>
+  <p class="sub"><code>chara_card_v2</code> · spec 2.0 · DcKaizen · character_version <code>main</code></p>
+
+  <div class="notice">
+    这张卡是成人向角色卡（角色设定为 teenager）。本页只展示解析后的结构与元信息，正文、开场白、作者备注的原文都没有复制进来；列表里的简介位置用打码条代替。
+    真实导入后，应用里看到的是完整内容。
+  </div>
+
+  <div class="cols">
+    <div>
+      <p class="panel-title">寄存区列表</p>
+      <div class="phone">
+        <div class="phone-head"><b>酒馆</b><span>角色卡 · 2</span></div>
+
+        <div class="row">
+          <div class="avatar">H</div>
+          <div class="row-main">
+            <div class="name-line">
+              <span class="name">Haena</span>
+              <span class="tag">Female</span>
+              <span class="tag">Romance</span>
+            </div>
+            <span class="redacted">简介含成人向内容，已隐去</span>
+            <span class="meta">4 段开场 · 5170 字正文</span>
+          </div>
+          <span class="del">删除</span>
+        </div>
+
+        <div class="row">
+          <div class="avatar">雾</div>
+          <div class="row-main">
+            <div class="name-line">
+              <span class="name">雾港世界书</span>
+              <span class="tag">示例</span>
+            </div>
+            <span class="summary">灯塔/守夜 · 雾潮/潮汐 · 教会/祷词 · 旧钟楼</span>
+            <span class="meta">18 条条目 · 2 条常驻</span>
+          </div>
+          <span class="del">删除</span>
+        </div>
+      </div>
+      <p class="panel-hint">第二行是世界书的形态：没有正文，简介退回前 4 条条目的关键词。</p>
+    </div>
+
+    <div>
+      <p class="panel-title">详情面板顶部（点开这张卡先看到的部分）</p>
+      <div class="card-box">
+        <p class="field-label">名字</p>
+        <div class="input-mock">Haena</div>
+
+        <p class="field-label">设定正文（角色描述、性格、情境）</p>
+        <div class="textarea-mock"></div>
+
+        <div class="info">
+          <div class="chips">
+            <span class="chip spec">V2 卡</span>
+            <span class="chip">Female</span>
+            <span class="chip">Romance</span>
+            <span class="chip">gyaru</span>
+            <span class="chip">brown</span>
+            <span class="chip">Malepov</span>
+            <span class="chip">Size Difference</span>
+          </div>
+          <p class="facts">作者 DcKaizen · 版本 main · 4 段开场 · 5170 字正文</p>
+          <div class="notes">
+            <span>▸ 作者备注</span>
+            <p>（171 字，含更新说明与 CP 设定，点开才展开）</p>
+          </div>
+        </div>
+      </div>
+      <p class="panel-hint">条目数是 0，所以详情和列表都不显示「N 条条目」这一段。</p>
+    </div>
+  </div>
+
+  <h2>16 个原始字段的去向</h2>
+  <table>
+    <thead>
+      <tr><th>字段</th><th>原始内容</th><th>导入后</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>spec</td><td>chara_card_v2 / 2.0</td><td>详情徽标「V2 卡」</td></tr>
+      <tr><td>name</td><td>Haena</td><td>名字、会话标题</td></tr>
+      <tr><td>description</td><td>1271 字</td><td>body 第一段 → 列表简介 + 提示词</td></tr>
+      <tr><td>personality</td><td class="dim">空</td><td class="dim">不生成空标题</td></tr>
+      <tr><td>scenario</td><td class="dim">空</td><td class="dim">—</td></tr>
+      <tr><td>first_mes</td><td>365 字</td><td>第 1 段开场白</td></tr>
+      <tr><td>alternate_greetings</td><td>3 段（760 / 465 / 621 字）</td><td>备选开场，聊天页可「换开场 1/4」</td></tr>
+      <tr><td>mes_example</td><td>3883 字</td><td>body 里的「对话示例（仅作语气参考）」</td></tr>
+      <tr><td>system_prompt</td><td class="dim">空</td><td class="dim">—</td></tr>
+      <tr><td>post_history_instructions</td><td class="dim">空</td><td class="dim">没有后置指令</td></tr>
+      <tr><td>creator_notes</td><td>171 字</td><td>详情「作者备注」折叠区</td></tr>
+      <tr><td>creator</td><td>DcKaizen</td><td>详情「作者」</td></tr>
+      <tr><td>character_version</td><td>main</td><td>详情「版本」（原样显示，不校验格式）</td></tr>
+      <tr><td>tags</td><td>6 个</td><td>列表显示前 2 个，详情全部</td></tr>
+      <tr><td>avatar</td><td>80 字符外链</td><td>丢弃：本地优先，不为头像访问第三方</td></tr>
+      <tr><td>extensions</td><td>166 字符</td><td>未解析，原样留在文件里，不入库</td></tr>
+      <tr><td>character_book</td><td>0 条条目</td><td>无世界书，列表不显示条目数</td></tr>
+    </tbody>
+  </table>
+
+  <h2>顺带发现的四件事</h2>
+  <div class="findings">
+    <div class="finding">
+      <b>3272 字是对话示例</b>
+      <span>5170 字正文里，description 只有 1271 字，mes_example 占了 3883 字。这段每轮都进 system，是长对话成本的大头。</span>
+    </div>
+    <div class="finding">
+      <b>4 段开场全都可用</b>
+      <span>默认开场 365 字，三段备选 760 / 465 / 621 字，换开场时不必回原文件。</span>
+    </div>
+    <div class="finding">
+      <b>简介里的 {{char}} 会被替换</b>
+      <span>卡里写的是「{{char}} is a gyaru…」，列表显示「Haena is a gyaru…」。本轮之前这里会露出模板变量。</span>
+    </div>
+    <div class="finding">
+      <b>没有世界书，不影响挂载</b>
+      <span>条目为 0 时设定照常注入，只是「设定 N」标签不会出现；群聊时也不会被当成世界书处理。</span>
+    </div>
+  </div>
+
+  <footer>
+    数据来自 <code>main_haena-woo-6aee4ca7_spec_v2.json</code>（8843 字节），走的是和导入按钮完全相同的 <code>normalizeCard → settingFromCard</code> 路径。<br />
+    复现：<code>npm run cardcase -- &lt;卡片路径&gt;</code>，加 <code>-- --json</code> 输出完整结构。
+  </footer>
+</div>
+</body>
+</html>
