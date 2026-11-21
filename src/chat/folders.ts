@@ -10,15 +10,15 @@ export interface VaultFolder {
 }
 
 /** 每个区允许放哪些东西 */
-export const FOLDER_CONTENTS: Record<FolderArea, Array<{ kind: DocKind | 'preset'; label: string }>> = {
+export const FOLDER_CONTENTS: Record<FolderArea, Array<{ kind: DocKind | 'prompt'; label: string }>> = {
   tavern: [
     { kind: 'character', label: '角色卡' },
     { kind: 'world', label: '世界书' },
-    { kind: 'preset', label: '预设' },
+    { kind: 'prompt', label: '提示词' },
   ],
   writing: [
     { kind: 'setting', label: '设定' },
-    { kind: 'preset', label: '预设' },
+    { kind: 'prompt', label: '提示词' },
   ],
 }
 

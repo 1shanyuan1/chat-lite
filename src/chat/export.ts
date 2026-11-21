@@ -51,7 +51,11 @@ export function sessionToMarkdown(session: Session, turns: ChatTurn[]): string {
     lines.push('')
     lines.push(`## ${i + 1}. 用户${turn.variants.length > 1 ? `（版本 ${turn.active + 1}/${turn.variants.length}）` : ''}`)
     lines.push('')
-    lines.push(variant.user.content)
+    lines.push(variant.user.content || '（仅附件）')
+    if (variant.user.attachments?.length) {
+      lines.push('')
+      lines.push(variant.user.attachments.map((a) => `- 附件：${a.name}`).join('\n'))
+    }
 
     if (variant.assistant) {
       lines.push('')

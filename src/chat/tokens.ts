@@ -143,3 +143,14 @@ export function readGeminiUsage(raw: unknown): Partial<Usage> | null {
 
 export const formatTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n))
 export const formatPercent = (r: number) => `${(r * 100).toFixed(r >= 0.1 ? 0 : 1)}%`
+
+/**
+ * 压缩预警水位（百分比）。
+ *
+ * 默认 80；夹在 50–95 之间——太低会一直弹提醒，太高（99）几乎等于没有预警，
+ * 而上下文真的打满时压缩这一步本身就是一次模型调用，已经没有余量了。
+ */
+export function compressThreshold(value?: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 80
+  return Math.min(95, Math.max(50, Math.round(value)))
+}

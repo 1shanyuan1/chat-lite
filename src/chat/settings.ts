@@ -1,12 +1,8 @@
-import { applyMacros, type CharacterCard } from './characters'
+import { applyMacros, type CharacterCard, type WorldEntry } from './characters'
+import type { EvolutionEntry } from './evolution'
 
-export interface SettingEntry {
-  id: string
-  keys: string[]
-  content: string
-  enabled: boolean
-  constant?: boolean
-}
+/** 条目与角色卡的世界书条目是同一套结构，直接用同一个类型，避免字段各加一遍 */
+export type SettingEntry = WorldEntry
 
 /**
  * 设定文件：角色卡与世界书合并后的统一形态。
@@ -26,7 +22,24 @@ export interface SettingDoc {
   entries: SettingEntry[]
   /** 可选开场白；有则在开新会话时插入 */
   firstMessage?: string
+  /** 备选开场（不含 firstMessage）；有的话聊天页可以换开场 */
+  greetings?: string[]
+  /** 历史之后的追加指令：每轮都插在对话历史末尾，权重比 system 更高 */
+  postHistory?: string
+  /** 设定发展模式：这份是某张卡的发展稿，指向原卡 */
+  derivedFrom?: string
+  /** 发展稿的变更历史，新的在前 */
+  changelog?: EvolutionEntry[]
   avatar?: string
+  /**
+   * 卡片规范与作者信息，导入时保留、导出时写回。
+   * 简介不单独存：寄存区直接用 body 现算（summaryOf），改完正文立刻能看到。
+   */
+  spec?: string
+  creator?: string
+  creatorNotes?: string
+  tags?: string[]
+  version?: string
   createdAt: number
   updatedAt: number
 }
@@ -42,6 +55,22 @@ export const emptySetting = (kind: DocKind = 'setting'): SettingDoc => ({
 })
 
 const join = (...parts: Array<string | undefined>) => parts.filter((p) => p && p.trim()).join('\n\n')
+
+/**
+ * 一行简介：去掉 HTML 与 markdown 记号，空白压成一个空格，超长截断。
+ * 角色描述普遍是 HTML 或带换行的长文，直接塞进列表会把行高撑乱。
+ */
+export function summaryOf(description?: string, fallback?: string): string {
+  const raw = (description ?? '').trim() || (fallback ?? '').trim()
+  if (!raw) return ''
+  const text = raw
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[*_`>#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text.length > 110 ? `${text.slice(0, 110)}…` : text
+}
 
 /** 从 SillyTavern 角色卡转成设定文件 */
 export function settingFromCard(card: CharacterCard): SettingDoc {
@@ -59,7 +88,14 @@ export function settingFromCard(card: CharacterCard): SettingDoc {
     body,
     entries: card.worldInfo.map((e) => ({ ...e })),
     firstMessage: card.firstMessage || undefined,
+    greetings: card.greetings.length > 0 ? card.greetings : undefined,
+    postHistory: card.postHistory,
     avatar: card.avatar,
+    spec: card.spec,
+    creator: card.creator,
+    creatorNotes: card.creatorNotes,
+    tags: card.tags,
+    version: card.version,
     createdAt: card.createdAt,
     updatedAt: Date.now(),
   }
@@ -110,6 +146,16 @@ export function renderSetting(doc: SettingDoc, userName: string): string {
   return `## ${name}\n${body}`
 }
 
+/**
+ * 我自己的设定：让角色知道 {{user}} 是谁。
+ * 只在挂了设定文件时注入——没有角色的普通聊天里写「我是谁」没有意义。
+ */
+export function renderPersona(persona: string | undefined, userName: string, charName: string): string {
+  const text = persona?.trim()
+  if (!text) return ''
+  return `## ${userName}\n${applyMacros(text, charName, userName)}`
+}
+
 /** 合并多份设定的常驻正文 */
 export function renderSettings(docs: SettingDoc[], userName: string): string {
   return docs
@@ -118,16 +164,103 @@ export function renderSettings(docs: SettingDoc[], userName: string): string {
     .join('\n\n')
 }
 
-/** 合并多份设定的关键词条目，供世界书匹配使用 */
-export function collectEntries(docs: SettingDoc[]): SettingEntry[] {
-  return docs.flatMap((doc) => doc.entries)
+/**
+ * 合并多份设定的关键词条目，供世界书匹配使用。
+ *
+ * 条目里的 {{char}} / {{user}} 必须在这里替换掉——不同设定对应的角色名不同，
+ * 只能按各自的名字替换。漏了这一步，模型会看到「{{char}}: "What is Eldoria?"」
+ * 这种原文（SillyTavern 的默认卡就是这么写条目的）。
+ */
+export function collectEntries(docs: SettingDoc[], userName: string): SettingEntry[] {
+  return docs.flatMap((doc) =>
+    doc.entries.map((entry) => ({
+      ...entry,
+      content: applyMacros(entry.content, doc.name, userName),
+      keys: entry.keys.map((key) => applyMacros(key, doc.name, userName)),
+    }))
+  )
+}
+
+/**
+ * 一份设定的全部开场：默认开场在前，备选在后。
+ * 空串丢掉、重复的也丢掉——有些卡会把 first_mes 原样塞进备选里。
+ */
+export function greetingsOf(doc: SettingDoc, userName: string): string[] {
+  const raw = [doc.firstMessage, ...(doc.greetings ?? [])]
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const text of raw) {
+    if (!text || !text.trim()) continue
+    const applied = applyMacros(text, doc.name, userName)
+    if (seen.has(applied)) continue
+    seen.add(applied)
+    out.push(applied)
+  }
+  return out
+}
+
+/** 挂载多份设定时，用第一份带开场白的作为开场；返回整份列表方便换 */
+export function greetingList(docs: SettingDoc[], userName: string): string[] {
+  for (const doc of docs) {
+    const list = greetingsOf(doc, userName)
+    if (list.length > 0) return list
+  }
+  return []
+}
+
+/**
+ * 每份设定的第一段开场。
+ * 单角色时只有一条；挂多张卡（群聊）时每张各出一条，开头会拼上角色名。
+ */
+export function collectGreetings(docs: SettingDoc[], userName: string): Array<{ name: string; text: string }> {
+  const out: Array<{ name: string; text: string }> = []
+  for (const doc of docs) {
+    const list = greetingsOf(doc, userName)
+    if (list.length > 0) out.push({ name: doc.name, text: list[0] })
+  }
+  return out
 }
 
 /** 挂载多份设定时，用第一份带开场白的作为开场 */
 export function pickGreeting(docs: SettingDoc[], userName: string): { name: string; text: string } | null {
-  for (const doc of docs) {
-    const text = doc.firstMessage?.trim()
-    if (text) return { name: doc.name, text: applyMacros(text, doc.name, userName) }
+  return collectGreetings(docs, userName)[0] ?? null
+}
+
+/**
+ * 开场白落成第一轮时的整段文本。
+ *
+ * 单卡：用 pick 指定的那一段（越界就夹回范围）——这是「选开场白」的核心，
+ * 第一轮说什么由用户挑，而不是永远默认第一段。
+ * 群聊：每张卡各出第一段，前面标上名字，行为与以前一致。
+ */
+export function greetingScript(docs: SettingDoc[], userName: string, pick = 0): string {
+  const cast = docs
+    .map((doc) => ({ name: doc.name, list: greetingsOf(doc, userName) }))
+    .filter((item) => item.list.length > 0)
+  if (cast.length === 0) return ''
+  if (cast.length === 1) {
+    const list = cast[0].list
+    return list[Math.min(Math.max(pick, 0), list.length - 1)]
   }
-  return null
+  return cast.map((item) => `**${item.name}**：${item.list[0]}`).join('\n\n')
+}
+
+/**
+ * 群聊：场上不止一个角色时，明确告诉模型「一次只说一个人」。
+ * 不加这段，多张卡的设定会被混成同一个人说话。
+ */
+export function renderCast(docs: SettingDoc[]): string {
+  // 只有「角色卡」才算同场角色。
+  // 写作模式挂的多份是设定文件（世界观、人物小传、规则），按 docs.length 判断
+  // 会把「雾港世界观 + 陆行舟」当成两个人对话，直接污染提示词。
+  const cast = docs.filter((d) => d.kind === 'character')
+  if (cast.length < 2) return ''
+  const names = cast.map((d) => d.name).join('、')
+  return [
+    '## 场上角色',
+    `这一段对话里同时有：${names}。`,
+    '- 每次回复只让一个角色说话，用「**名字**：」开头。',
+    '- 不要让多个角色在同一段里轮流念台词，也不要替用户发言。',
+    '- 用户可能同时跟几个人说话，按语境判断该谁接；拿不准就让最相关的那位回应。',
+  ].join('\n')
 }

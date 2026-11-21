@@ -1,10 +1,10 @@
 import { strToU8, zipSync } from 'fflate'
 import { cardToV2 } from './card-json'
 import type { SettingDoc } from './settings'
-import type { PresetItem } from './vault'
+import type { PromptItem } from './vault'
 
 export interface BundleItem {
-  kind: 'character' | 'world' | 'setting' | 'preset'
+  kind: 'character' | 'world' | 'setting' | 'prompt'
   name: string
   /** 文件名（不含目录），manifest 里引用 */
   file: string
@@ -39,19 +39,19 @@ function settingToJson(doc: SettingDoc) {
   }
 }
 
-function presetToJson(preset: PresetItem) {
+/** 提示词片段：纯文本 + 自家标记，导回来还能认得 */
+function promptToJson(prompt: PromptItem) {
   return {
-    spec: 'chatlite_preset',
+    spec: 'chatlite_prompt',
     version: 1,
-    name: preset.name,
-    ...(preset.topP !== undefined ? { top_p: preset.topP } : {}),
-    ...(preset.maxTokens !== undefined ? { max_tokens: preset.maxTokens } : {}),
+    name: prompt.name,
+    text: prompt.text,
   }
 }
 
 const safeName = (name: string) => (name || '未命名').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40)
 
-export function collectBundleItems(docs: SettingDoc[], presets: PresetItem[]): BundleItem[] {
+export function collectBundleItems(docs: SettingDoc[], prompts: PromptItem[] = []): BundleItem[] {
   const items: BundleItem[] = []
   const used = new Set<string>()
 
@@ -74,12 +74,12 @@ export function collectBundleItems(docs: SettingDoc[], presets: PresetItem[]): B
     }
   }
 
-  for (const preset of presets) {
+  for (const prompt of prompts) {
     items.push({
-      kind: 'preset',
-      name: preset.name,
-      file: unique(safeName(preset.name), '.preset.json'),
-      payload: presetToJson(preset),
+      kind: 'prompt',
+      name: prompt.name,
+      file: unique(safeName(prompt.name), '.prompt.json'),
+      payload: promptToJson(prompt),
     })
   }
 

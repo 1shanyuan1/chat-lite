@@ -1,11 +1,10 @@
 import type { CharacterCard } from './characters'
 
-export type VaultKind = 'world' | 'preset' | 'prompt'
+export type VaultKind = 'world' | 'prompt'
 
 export const VAULT_KINDS: Array<{ id: 'character' | VaultKind; label: string; hint: string }> = [
   { id: 'character', label: '角色卡', hint: 'PNG / JSON，SillyTavern V1–V3' },
   { id: 'world', label: '世界书', hint: '关键词触发的设定集' },
-  { id: 'preset', label: '预设', hint: '温度、长度等生成参数' },
   { id: 'prompt', label: '提示词', hint: '可复用的系统提示词片段' },
 ]
 
@@ -17,44 +16,18 @@ export interface WorldItem {
   updatedAt: number
 }
 
-/** SillyTavern Chat Completion 预设里我们真正会用的字段 */
-export interface PresetItem {
-  id: string
-  /** 所属文件夹，空表示未分类 */
-  folderId?: string
-  name: string
-  /** 温度已不再支持：多数服务商不推荐调整，避免误导 */
-  topP?: number
-  maxTokens?: number
-  createdAt: number
-  updatedAt: number
-  /** 原始文件存档，便于以后扩展或导出 */
-  raw?: unknown
-}
-
+/** 可复用的系统提示词片段 */
 export interface PromptItem {
   id: string
+  /** 所属文件夹，空表示未分类（落在「通用」区） */
+  folderId?: string
   name: string
   text: string
   createdAt: number
   updatedAt: number
 }
 
-export type VaultEntry = WorldItem | PresetItem | PromptItem
-
-/** 预设只覆盖它声明过的字段，没写的留空（由调用方决定是否回退到全局） */
-export function presetOverrides(preset?: PresetItem | null): { topP?: number; maxTokens?: number } {
-  if (!preset) return {}
-  const out: { topP?: number; maxTokens?: number } = {}
-  if (preset.topP !== undefined) out.topP = preset.topP
-  if (preset.maxTokens !== undefined) out.maxTokens = preset.maxTokens
-  return out
-}
-
-const num = (v: unknown): number | undefined => {
-  const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : NaN
-  return Number.isFinite(n) ? n : undefined
-}
+export type VaultEntry = WorldItem | PromptItem
 
 /**
  * 按结构猜类型，不靠扩展名——社区文件经常乱命名。
@@ -80,23 +53,18 @@ export function detectKind(payload: unknown): 'character' | VaultKind | null {
   }
   if (root.spec === 'chara_card_v2' || root.spec === 'chara_card_v3') return 'character'
 
+  // SillyTavern 的对话预设：本质是一组提示词。必须在世界书之前认出来，
+  // 否则 prompts 数组会命中下面的「值里有 keys」规则（Array.prototype.keys 也是 keys）
+  if (Array.isArray(d.prompts)) return 'prompt'
+
   // 世界书
   const book = d.entries && typeof d.entries === 'object' && !Array.isArray(d.entries) ? d.entries : d
   if (book && typeof book === 'object' && !Array.isArray(book) && Object.keys(book as object).length > 0) {
     const values = Object.values(book as Record<string, unknown>)
-    if (values.some((v) => v && typeof v === 'object' && 'keys' in (v as object))) return 'world'
+    // 数组也有继承来的 keys，必须排除，否则 { prompts: [...] } 会被当成世界书
+    if (values.some((v) => v && typeof v === 'object' && !Array.isArray(v) && 'keys' in (v as object))) return 'world'
   }
   if (looksLikeEntries(book)) return 'world'
-
-  // 生成预设。温度我们不再下发，但社区文件里普遍有它，仍可作为识别线索
-  if (
-    num(d.temperature) !== undefined ||
-    num(d.top_p) !== undefined ||
-    num(d.max_tokens) !== undefined ||
-    num(d.max_response_length) !== undefined
-  ) {
-    return 'preset'
-  }
 
   // 提示词
   if (typeof d.prompt === 'string' || typeof d.content === 'string' || typeof d.system_prompt === 'string') {
@@ -141,17 +109,32 @@ export function toWorldItem(payload: unknown, fallbackName: string): WorldItem {
   }
 }
 
-export function toPresetItem(payload: unknown, fallbackName: string): PresetItem {
-  const d = (payload ?? {}) as Record<string, unknown>
-  return {
-    id: crypto.randomUUID(),
-    name: typeof d.name === 'string' && d.name ? d.name : fallbackName,
-    topP: num(d.top_p),
-    maxTokens: num(d.max_tokens) ?? num(d.max_response_length) ?? num(d.openai_max_tokens),
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    raw: payload,
+/**
+ * SillyTavern 预设里的提示词条目，按顺序拼成一段文本。
+ * 跳过空内容和被禁用的条目，避免把一堆占位符灌进系统提示词。
+ */
+function presetPromptText(d: Record<string, unknown>): string {
+  const list = d.prompts
+  if (!Array.isArray(list)) return ''
+  const disabled = new Set<string>()
+  const order = d.prompt_order
+  if (Array.isArray(order)) {
+    for (const group of order) {
+      const items = (group as Record<string, unknown> | null)?.order
+      if (!Array.isArray(items)) continue
+      for (const item of items) {
+        const row = item as Record<string, unknown> | null
+        if (row && row.enabled === false && typeof row.identifier === 'string') disabled.add(row.identifier)
+      }
+    }
   }
+
+  return list
+    .filter((p): p is Record<string, unknown> => Boolean(p && typeof p === 'object'))
+    .filter((p) => !(typeof p.identifier === 'string' && disabled.has(p.identifier)))
+    .map((p) => (typeof p.content === 'string' ? p.content.trim() : ''))
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 export function toPromptItem(payload: unknown, fallbackName: string): PromptItem {
@@ -165,7 +148,9 @@ export function toPromptItem(payload: unknown, fallbackName: string): PromptItem
           ? d.content
           : typeof d.system_prompt === 'string'
             ? d.system_prompt
-            : ''
+            : typeof d.text === 'string'
+              ? d.text
+              : presetPromptText(d)
   return {
     id: crypto.randomUUID(),
     name: typeof d.name === 'string' && d.name ? d.name : fallbackName,

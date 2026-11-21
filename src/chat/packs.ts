@@ -14,11 +14,11 @@ export interface PromptPack {
   actions: PackAction[]
 }
 
-/** 极简：不加任何东西，就是纯聊天 */
+/** 极简：包本身不加任何东西，但用户仍可自己挂一条提示词 */
 const MINIMAL: PromptPack = {
   id: 'minimal',
   name: '极简',
-  hint: '纯聊天，不注入任何提示词',
+  hint: '纯聊天',
   systemPrompt: '',
   actions: [],
 }
@@ -30,7 +30,7 @@ const MINIMAL: PromptPack = {
 const WRITING: PromptPack = {
   id: 'writing',
   name: '写作',
-  hint: '推进文本，可以下指令',
+  hint: '推进文本',
   systemPrompt:
     '你与用户共同推进一段文本。严格遵循设定文件中的世界观、人物与文风，只输出文本本身，不要解释你的思路，不要复述用户的指令，不要加「以下是」这类套话。当用户给出的是修改意见时，直接按要求重写，不要说「好的我来修改」。',
   // 不给按钮：写作的下一步是「接着写」或「说一句修改意见」，一排预设反而打断节奏
@@ -41,7 +41,7 @@ const WRITING: PromptPack = {
 const TAVERN: PromptPack = {
   id: 'tavern',
   name: '酒馆',
-  hint: '以角色身份说话',
+  hint: '角色对话',
   systemPrompt:
     '你正在与用户进行角色扮演。始终以设定文件中角色的口吻说话，不要跳出角色解释、总结或评价。场景与背景参考设定文件。',
   actions: [],
@@ -53,14 +53,6 @@ export const DEFAULT_PACK_ID = MINIMAL.id
 
 export function findPack(id?: string | null): PromptPack {
   return BUILTIN_PACKS.find((p) => p.id === id) ?? MINIMAL
-}
-
-/**
- * 三段提示词按优先级拼接：提示词包（写作/角色规范）→ 会话级（压缩摘要）→ 用户设置。
- * 抽出成纯函数，方便测试与复用。
- */
-export function composeSystemPrompt(...parts: Array<string | null | undefined>): string {
-  return parts.filter((part) => part && part.trim()).join('\n\n')
 }
 
 /**

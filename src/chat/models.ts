@@ -49,12 +49,16 @@ function pickNumber(source: unknown): number | undefined {
 
 /** 各家字段名不一，挨个试一遍 */
 function pickLevels(item: Record<string, unknown>): string[] | undefined {
+  const effort = item.effort as Record<string, unknown> | undefined
   const candidates = [
     item.reasoning_effort_levels,
     item.reasoning_efforts,
     item.supported_reasoning_efforts,
     item.thinking_levels,
     item.thinking_efforts,
+    // DeepSeek 官方 /models：{ effort: { supported_levels, default_level } }
+    effort?.supported_levels,
+    effort?.levels,
     (item.reasoning as Record<string, unknown> | undefined)?.levels,
     (item.capabilities as Record<string, unknown> | undefined)?.reasoning &&
       ((item.capabilities as Record<string, Record<string, unknown>>).reasoning?.efforts as unknown),
@@ -74,9 +78,10 @@ function pickLevels(item: Record<string, unknown>): string[] | undefined {
 const REASONING_PATTERNS = [
   /qwen3/i,
   /qwq/i,
-  /deepseek-(r1|v3\.2|v4|reasoner)/i,
+  // deepseek-chat 现在由 V4.1-Flash 承接，默认就思考（实测会返回 reasoning_content）
+  /deepseek-(r1|v3\.2|v4|reasoner|chat|flash)/i,
   /glm-(4\.5|5|z)/i,
-  /kimi-k2/i,
+  /kimi-k[23]/i,
   /minimax-m[23]/i,
   /think/i,
   /reason/i,
@@ -124,9 +129,15 @@ export function normalize(payload: unknown, protocol: Protocol = 'openai'): Mode
     if (!id) continue
 
     const pricing = (item.effective_pricing ?? item.pricing ?? {}) as Record<string, unknown>
+    const displayName = pickString(item.display_name) ?? pickString(item.displayName)
+    // Gemini 的 name 是「models/xxx」这种 id，别拿来当显示名
+    const rawName = pickString(item.name)
+    const label = displayName ?? (rawName && !rawName.startsWith('models/') ? rawName : undefined)
+    const modalities = Array.isArray(item.input_modalities) ? item.input_modalities.map(String) : []
+
     models.push({
       id: id.replace(/^models\//, ''),
-      label: pickString(item.display_name) ?? pickString(item.displayName),
+      label,
       contextLength:
         pickNumber(item.context_length) ??
         pickNumber(item.context_window) ??
@@ -134,7 +145,7 @@ export function normalize(payload: unknown, protocol: Protocol = 'openai'): Mode
         pickNumber(item.inputTokenLimit),
       inputPrice: pickString(pricing.prompt),
       outputPrice: pickString(pricing.completion),
-      vision: item.supports_vision === true,
+      vision: item.supports_vision === true || modalities.includes('image'),
       tools: item.supports_tools === true,
       reasoning:
         item.supports_reasoning === true || pickLevels(item) !== undefined || inferReasoning(id.replace(/^models\//, '')),
