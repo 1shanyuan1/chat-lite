@@ -19,6 +19,16 @@ function read(): SettingDoc[] {
 function write(list: SettingDoc[]) {
   try {
     localStorage.setItem(KEY, JSON.stringify(list))
+    return
+  } catch {
+    /* 配额不够：优先丢旧卡的头像，别把刚导入的这张也一起丢掉 */
+  }
+  const [newest, ...others] = list
+  try {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify([newest, ...others.map((d) => ({ ...d, avatar: undefined }))])
+    )
   } catch {
     localStorage.setItem(
       KEY,

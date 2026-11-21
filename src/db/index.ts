@@ -1,4 +1,6 @@
 import type { Usage } from '@/chat/tokens'
+import type { Attachment } from '@/chat/attachments'
+import type { WebSource } from '@/chat/web-search-types'
 
 export type Role = 'user' | 'assistant'
 
@@ -14,26 +16,63 @@ export interface Session {
   characterId?: string
   /** 挂载的设定文件，可多个 */
   settingIds?: string[]
-  /** 绑定的生成预设（可选） */
-  presetId?: string
+  /** 绑定的提示词；不选就是不带提示词 */
+  promptId?: string
+  /** 用户手动改过标题；置 true 后不再被第一句话自动覆盖 */
+  titleLocked?: boolean
+  /** 压缩续接时写下的前情摘要；界面上可以展开看，也拼进了 systemPrompt */
+  recap?: string
 }
 
 export interface TurnUser {
   content: string
+  /** 图片与文本附件；老数据没有这个字段 */
+  attachments?: Attachment[]
 }
 
 export interface TurnAssistant {
   content: string
   reasoning?: string
+  /** 从发出请求到收完的总耗时（含思考与工具轮次），毫秒 */
+  durationMs?: number
+  /** 这一轮实际用的思考档位；undefined 表示没设置 */
+  reasoningLevel?: string
+  /** 这个模型当时有没有档位/开关可调；没有就不显示状态标签 */
+  reasoningSupported?: boolean
   model?: string
   usage?: Usage
   interrupted?: boolean
+  /** 这一轮注入的世界书条目（截断后的开头），用来核对设定有没有生效 */
+  worldEntries?: string[]
+  /** 这一轮里执行过的工具调用（目前只有 web_search） */
+  toolCalls?: ToolCallRecord[]
+  /** 上游自带搜索返回的来源；native 模式用 */
+  sources?: WebSource[]
+}
+
+export interface ToolCallRecord {
+  id: string
+  name: string
+  /** 模型给的原始参数 JSON */
+  arguments: string
+  /** 回传给模型的工具输出 */
+  result: string
+  /** 结构化来源，用于界面展示 */
+  sources?: WebSource[]
+  error?: string
 }
 
 /** 一轮 = 一次提问 + 一次回答；variants 里存的是互相替代的版本 */
 export interface TurnVariant {
   user: TurnUser
   assistant?: TurnAssistant
+  /**
+   * 生成这一版时，前面每一轮用的是第几版（按 idx 从 0 开始，不含本轮）。
+   *
+   * 有了它才能回答「这一版从哪来」：切换过早期版本之后，当前激活链
+   * 不一定还是它当时依赖的那条。老记录没有这个字段，只能退回当前链。
+   */
+  path?: number[]
 }
 
 export interface ChatTurn {
@@ -43,6 +82,17 @@ export interface ChatTurn {
   variants: TurnVariant[]
   active: number
   createdAt: number
+}
+
+/** 记忆文件：画像、会话索引、用户反馈 */
+export type MemoryKind = 'profile' | 'index' | 'feedback'
+
+export interface MemoryRecord {
+  kind: MemoryKind
+  /** profile 用 'main'；index 用 sessionId；feedback 用 turnId */
+  key: string
+  body: string
+  updatedAt: number
 }
 
 export interface SearchHit {
@@ -62,16 +112,23 @@ export interface Repo {
     systemPrompt?: string,
     packId?: string,
     settingIds?: string[],
-    presetId?: string
+    promptId?: string,
+    recap?: string
   ): Promise<Session>
-  renameSession(id: string, title: string): Promise<void>
+  renameSession(id: string, title: string, lock?: boolean): Promise<void>
   setSessionPack(id: string, packId: string): Promise<void>
+  /** 补挂设定：会话已经建好、但还没说话时用（起始页勾卡后直接发送） */
+  setSessionSettings(id: string, settingIds: string[]): Promise<void>
+  setSessionPrompt(id: string, promptId?: string): Promise<void>
   deleteSession(id: string): Promise<void>
   listTurns(sessionId: string): Promise<ChatTurn[]>
   appendTurn(turn: ChatTurn): Promise<void>
   updateTurn(turn: ChatTurn): Promise<void>
   deleteTurnsFrom(sessionId: string, fromIdx: number): Promise<void>
   search(query: string, limit?: number): Promise<SearchHit[]>
+  listMemory(kind?: MemoryKind): Promise<MemoryRecord[]>
+  putMemory(record: MemoryRecord): Promise<void>
+  deleteMemory(kind?: MemoryKind): Promise<void>
   clearAll(): Promise<void>
 }
 
@@ -122,6 +179,7 @@ function writeJson(key: string, value: unknown) {
 export function createLocalRepo(): Repo {
   const SESSIONS = 'cl.sessions'
   const TURNS = 'cl.turns'
+  const MEMORY = 'cl.memory'
 
   const allTurns = () => readJson<ChatTurn[]>(TURNS, [])
 
@@ -129,10 +187,25 @@ export function createLocalRepo(): Repo {
     async listSessions() {
       return readJson<Session[]>(SESSIONS, []).sort((a, b) => b.updatedAt - a.updatedAt)
     },
-    async createSession(title, systemPrompt, packId, settingIds, presetId) {
-      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, settingIds, presetId }
+    async createSession(title, systemPrompt, packId, settingIds, promptId, recap) {
+      const session: Session = {
+        id: newId(),
+        title,
+        updatedAt: Date.now(),
+        systemPrompt,
+        packId,
+        settingIds,
+        promptId,
+        recap,
+      }
       writeJson(SESSIONS, [session, ...readJson<Session[]>(SESSIONS, [])])
       return session
+    },
+    async setSessionPrompt(id, promptId) {
+      writeJson(
+        SESSIONS,
+        readJson<Session[]>(SESSIONS, []).map((s) => (s.id === id ? { ...s, promptId } : s))
+      )
     },
     async setSessionPack(id, packId) {
       writeJson(
@@ -140,10 +213,18 @@ export function createLocalRepo(): Repo {
         readJson<Session[]>(SESSIONS, []).map((s) => (s.id === id ? { ...s, packId } : s))
       )
     },
-    async renameSession(id, title) {
+    async setSessionSettings(id, settingIds) {
       writeJson(
         SESSIONS,
-        readJson<Session[]>(SESSIONS, []).map((s) => (s.id === id ? { ...s, title, updatedAt: Date.now() } : s))
+        readJson<Session[]>(SESSIONS, []).map((s) => (s.id === id ? { ...s, settingIds } : s))
+      )
+    },
+    async renameSession(id, title, lock) {
+      writeJson(
+        SESSIONS,
+        readJson<Session[]>(SESSIONS, []).map((s) =>
+          s.id === id ? { ...s, title, ...(lock ? { titleLocked: true } : {}), updatedAt: Date.now() } : s
+        )
       )
     },
     async deleteSession(id) {
@@ -176,6 +257,26 @@ export function createLocalRepo(): Repo {
         allTurns().filter((t) => !(t.sessionId === sessionId && t.idx >= fromIdx))
       )
     },
+    async listMemory(kind) {
+      const all = readJson<MemoryRecord[]>(MEMORY, [])
+      return kind ? all.filter((m) => m.kind === kind) : all
+    },
+    async putMemory(record) {
+      const all = readJson<MemoryRecord[]>(MEMORY, []).filter(
+        (m) => !(m.kind === record.kind && m.key === record.key)
+      )
+      writeJson(MEMORY, [...all, record])
+    },
+    async deleteMemory(kind) {
+      if (!kind) {
+        writeJson(MEMORY, [])
+        return
+      }
+      writeJson(
+        MEMORY,
+        readJson<MemoryRecord[]>(MEMORY, []).filter((m) => m.kind !== kind)
+      )
+    },
     async search(query, limit = 50) {
       const q = query.trim().toLowerCase()
       if (!q) return []
@@ -203,6 +304,7 @@ export function createLocalRepo(): Repo {
     async clearAll() {
       writeJson(SESSIONS, [])
       writeJson(TURNS, [])
+      writeJson(MEMORY, [])
     },
   }
 }
@@ -218,7 +320,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   pack_id TEXT,
   character_id TEXT,
   setting_ids TEXT,
-  preset_id TEXT
+  prompt_id TEXT,
+  recap TEXT,
+  title_locked INTEGER
 );
 CREATE TABLE IF NOT EXISTS turns (
   id TEXT PRIMARY KEY NOT NULL,
@@ -232,6 +336,13 @@ CREATE TABLE IF NOT EXISTS turns (
   assistant_text TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns (session_id, idx);
+CREATE TABLE IF NOT EXISTS memory (
+  kind TEXT NOT NULL,
+  key TEXT NOT NULL,
+  body TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (kind, key)
+);
 `
 
 export async function createSqliteRepo(): Promise<Repo> {
@@ -246,7 +357,9 @@ export async function createSqliteRepo(): Promise<Repo> {
   await db.execute('ALTER TABLE sessions ADD COLUMN pack_id TEXT').catch(() => undefined)
   await db.execute('ALTER TABLE sessions ADD COLUMN character_id TEXT').catch(() => undefined)
   await db.execute('ALTER TABLE sessions ADD COLUMN setting_ids TEXT').catch(() => undefined)
-  await db.execute('ALTER TABLE sessions ADD COLUMN preset_id TEXT').catch(() => undefined)
+  await db.execute('ALTER TABLE sessions ADD COLUMN prompt_id TEXT').catch(() => undefined)
+  await db.execute('ALTER TABLE sessions ADD COLUMN recap TEXT').catch(() => undefined)
+  await db.execute('ALTER TABLE sessions ADD COLUMN title_locked INTEGER').catch(() => undefined)
 
   const rowToTurn = (row: Record<string, unknown>): ChatTurn => ({
     id: String(row.id),
@@ -260,7 +373,7 @@ export async function createSqliteRepo(): Promise<Repo> {
   return {
     async listSessions() {
       const res = await db.query(
-        'SELECT id, title, updated_at, system_prompt, pack_id, character_id, setting_ids, preset_id FROM sessions ORDER BY updated_at DESC'
+        'SELECT id, title, updated_at, system_prompt, pack_id, character_id, setting_ids, prompt_id, recap, title_locked FROM sessions ORDER BY updated_at DESC'
       )
       return (res.values ?? []).map((row: Record<string, unknown>) => ({
         id: String(row.id),
@@ -270,13 +383,15 @@ export async function createSqliteRepo(): Promise<Repo> {
         packId: row.pack_id == null ? undefined : String(row.pack_id),
         characterId: row.character_id == null ? undefined : String(row.character_id),
         settingIds: parseIds(row.setting_ids),
-        presetId: row.preset_id == null ? undefined : String(row.preset_id),
+        promptId: row.prompt_id == null ? undefined : String(row.prompt_id),
+        recap: row.recap == null ? undefined : String(row.recap),
+        ...(Number(row.title_locked) === 1 ? { titleLocked: true } : {}),
       }))
     },
-    async createSession(title, systemPrompt, packId, settingIds, presetId) {
-      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, settingIds, presetId }
+    async createSession(title, systemPrompt, packId, settingIds, promptId, recap) {
+      const session: Session = { id: newId(), title, updatedAt: Date.now(), systemPrompt, packId, settingIds, promptId, recap }
       await db.run(
-        'INSERT INTO sessions (id, title, updated_at, system_prompt, pack_id, setting_ids) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO sessions (id, title, updated_at, system_prompt, pack_id, setting_ids, prompt_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
         [
           session.id,
           session.title,
@@ -284,15 +399,31 @@ export async function createSqliteRepo(): Promise<Repo> {
           session.systemPrompt ?? null,
           session.packId ?? null,
           settingIds && settingIds.length > 0 ? JSON.stringify(settingIds) : null,
+          session.promptId ?? null,
         ]
       )
       return session
     },
+    async setSessionPrompt(id, promptId) {
+      await db.run('UPDATE sessions SET prompt_id = ? WHERE id = ?', [promptId ?? null, id])
+    },
     async setSessionPack(id, packId) {
       await db.run('UPDATE sessions SET pack_id = ? WHERE id = ?', [packId, id])
     },
-    async renameSession(id, title) {
-      await db.run('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?', [title, Date.now(), id])
+    async setSessionSettings(id, settingIds) {
+      await db.run('UPDATE sessions SET setting_ids = ?, updated_at = ? WHERE id = ?', [
+        JSON.stringify(settingIds.length > 0 ? settingIds : []),
+        Date.now(),
+        id,
+      ])
+    },
+    async renameSession(id, title, lock) {
+      await db.run(
+        lock
+          ? 'UPDATE sessions SET title = ?, title_locked = 1, updated_at = ? WHERE id = ?'
+          : 'UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?',
+        [title, Date.now(), id]
+      )
     },
     async deleteSession(id) {
       await db.run('DELETE FROM turns WHERE session_id = ?', [id])
@@ -360,9 +491,34 @@ export async function createSqliteRepo(): Promise<Repo> {
       }
       return hits
     },
+    async listMemory(kind) {
+      const res = kind
+        ? await db.query('SELECT kind, key, body, updated_at FROM memory WHERE kind = ? ORDER BY updated_at', [kind])
+        : await db.query('SELECT kind, key, body, updated_at FROM memory ORDER BY updated_at')
+      return (res.values ?? []).map((row: Record<string, unknown>) => ({
+        kind: String(row.kind) as MemoryKind,
+        key: String(row.key),
+        body: String(row.body),
+        updatedAt: Number(row.updated_at),
+      }))
+    },
+    async putMemory(record) {
+      await db.run(
+        'INSERT OR REPLACE INTO memory (kind, key, body, updated_at) VALUES (?, ?, ?, ?)',
+        [record.kind, record.key, record.body, record.updatedAt]
+      )
+    },
+    async deleteMemory(kind) {
+      if (!kind) {
+        await db.run('DELETE FROM memory')
+        return
+      }
+      await db.run('DELETE FROM memory WHERE kind = ?', [kind])
+    },
     async clearAll() {
       await db.run('DELETE FROM turns')
       await db.run('DELETE FROM sessions')
+      await db.run('DELETE FROM memory')
     },
   }
 }
