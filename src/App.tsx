@@ -1392,7 +1392,7 @@ function SettingsSheet() {
           <span className="flex-1">
             <span className="block text-sm font-medium text-neutral-700">关于 Chat Lite</span>
             <span className="mt-0.5 block text-[10px] leading-relaxed text-neutral-400">
-              v{packageInfo.version} · 预览版，后续将开源
+              v{packageInfo.version} · 已开源
             </span>
           </span>
           <ChevronRightIcon size={14} className="text-neutral-300" />

@@ -105,12 +105,12 @@
 | 位置 | 身份 | 现文案 |
 | --- | --- | --- |
 | src/App.tsx:1398 | 设置页底部入口行标题 | 关于 Chat Lite |
-| src/App.tsx:1400 | 设置页底部入口行副标题 | v{packageInfo.version} · 预览版，后续将开源 |
+| src/App.tsx:1400 | 设置页底部入口行副标题 | v{packageInfo.version} · 已开源 |
 | src/ui/AboutSheet.tsx | 主页面标题 | 关于 |
 | src/ui/AboutSheet.tsx | 主页面标语 | v{packageInfo.version} · 本地优先的 AI 聊天客户端 |
 | src/ui/about-text.ts | 主页面定位句（ABOUT_INTRO） | 自己填 API Key，请求直连服务商，不经过任何中转。所有数据只存本机，没有账号体系。 |
 | src/ui/about-text.ts | 主页面致谢与推荐（ABOUT_CREDITS，外链走 platform.openLink） | 联网搜索等逻辑借鉴 DeepSeek Harness（deepseek-ai/deepseek-harness，MIT），项目协议随它；附件 / 搜索可用性 / 思考档位做法参考 Chatbox 社区版（chatboxai/chatbox，GPLv3，仅思路与参数）；推荐 Chatbox（chatboxai.app） |
-| src/ui/AboutSheet.tsx | 主页面底部开源行 | 预览版，后续将开源 |
+
 | src/ui/AboutSheet.tsx | 主页面四个入口 | 使用说明书（各功能怎么用）/ 入门与支持（0 元上手 · 创建 KEY 教程）/ 更新日志（随版本记录）/ 反馈与调研（跳 ifno.fun/chat-lite/，反馈与问卷都在网页填） |
 | src/ui/AboutSheet.tsx | 主页面媒体按钮（联系作者） | 邮箱 / 小红书 / 抖音（点击复制号码，带已复制提示）/ 哔哩哔哩（跳 space.bilibili.com/382003849） |
 | src/ui/support-text.ts | 入门与支持页正文（SUPPORT_MD） | 硅基流动「推荐官计划」说明（邀请双方得额度，正规平台，作者得奖励券）+ 邀请链接 / 邀请码 ShSLs3Jz + 创建并使用 API Key 四步教程 |
@@ -202,7 +202,7 @@
 | App.tsx:1337-1357 | 界面 | 角色扮演（小节） / 我的名字 / 你 / 角色卡里的 {{user}} 会替换成这个名字。留空则显示「你」。/ 我的设定（可选） / 一段自我介绍：身份、外貌、和角色的关系。角色会把它当成对你的已知信息。/ 只在挂了设定文件（角色卡/世界书）时注入。支持 {{user}}，{{char}} 会替换成角色名。 | — |
 | App.tsx:1360 | 界面 | 记忆（设置小节标题） | — |
 | App.tsx:1385,1388 | 界面 | 保存 / Key 只保存在本机，请求直连你填写的接口，不经过任何中转 | 泛指「接口」可保留（待定①口径） |
-| App.tsx:1398,1400 | 界面 | 关于 Chat Lite / v{version} · 预览版，后续将开源 | 第四节入口行 |
+| App.tsx:1398,1400 | 界面 | 关于 Chat Lite / v{version} · 已开源 | 第四节入口行 |
 | App.tsx:1448 | 界面 | 默认（思考档位兜底） | — |
 | App.tsx:1457 | 界面 | 联网（搜索芯片兜底文案，自「模型内 · 推荐」剥离推荐后缀） | — |
 | App.tsx:1462,1464 | 界面 | 该模型不接收 / 思考开启时忽略（温度禁用原因） | — |

@@ -18,6 +18,7 @@ const MEDIA: Array<{ label: string; copy?: string; url?: string }> = [
   { label: '小红书', copy: '1387625111' },
   { label: '抖音', copy: '382003849' },
   { label: '哔哩哔哩', url: 'https://space.bilibili.com/382003849' },
+  { label: 'GitHub', url: 'https://github.com/1shanyuan1/chat-lite' },
 ]
 
 async function copyText(text: string): Promise<boolean> {
@@ -146,8 +147,6 @@ function AboutMain({ onOpen }: { onOpen: (view: View) => void }) {
           {ABOUT_CREDITS}
         </ReactMarkdown>
       </div>
-
-      <p className="mt-6 text-center text-[10px] text-neutral-400">预览版，后续将开源</p>
     </div>
   )
 }
