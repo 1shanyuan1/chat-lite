@@ -2,6 +2,7 @@ node_modules/
 dist/
 .cache/
 *.log
+*.apk
 
 # Capacitor 原生工程（由 npx cap add 生成，不入库）
 android/
@@ -10,3 +11,6 @@ ios/
 # 本地环境变量与密钥
 .env
 .env.*
+.workbuddy/
+.workbuddy-ai/
+public/pdfjs/
