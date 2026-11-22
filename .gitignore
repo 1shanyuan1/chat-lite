@@ -1,16 +1,36 @@
-node_modules/
-dist/
-.cache/
-*.log
-*.apk
+# ── 分层规则 ─────────────────────────────────────────────────────
+# 本仓库只收「产品层」。根目录其余内容（AI 工具产物、本地构建、签名文件等）
+# 一律默认忽略：WORKBUDDY / DeepSeek Harness 这类工具不可避免地会往根目录掉
+# 文件，黑名单永远追不上它们——白名单一层就把所有意外挡在库外。
+# 新文件想入库：先想清楚它属于哪一层，再到下面白名单加一行 ! 放行。
 
-# Capacitor 原生工程（由 npx cap add 生成，不入库）
+/*
+
+
+# ── 产品层（白名单）────────────────────────────────────────────
+!/.gitignore
+!/LICENSE
+!/README.md
+!/capacitor.config.ts
+!/index.html
+!/package.json
+!/package-lock.json
+!/tsconfig.json
+!/vite.config.ts
+!/ui-next.html
+!/docs
+!/design
+!/scripts
+!/src
+!/public
+
+# ── 工具产物层 ────────────────────────────────────────────────
+# 约定去处：WORKBUDDY / DeepSeek Harness / 草稿 / 临时实验都放 workspace/，
+# 永不入库；要进产品的文件手动挪到上面的产品层再提交。
+/workspace/
+
+# ── 本地构建与敏感层 ──────────────────────────────────────────
+# android/ 整层不入库（签名 keystore 和密码在里面）
 android/
-ios/
-
-# 本地环境变量与密钥
-.env
-.env.*
-.workbuddy/
-.workbuddy-ai/
+# pdfjs 资产是构建产物，build 时 pdfjs-assets.mjs 会重新生成
 public/pdfjs/
