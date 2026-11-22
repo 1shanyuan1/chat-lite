@@ -23,6 +23,7 @@ import {
   runSearchChats,
   runWriteMemory,
 } from './memory'
+import { checkUpdate, type UpdateInfo } from './update'
 import { completeText, streamChat, type ChatConfig, type WireTurn } from './client'
 import { humanizeError } from './errors'
 import {
@@ -144,7 +145,7 @@ const WEB_SEARCH_TOOL: WireTool = {
 }
 
 /** 每隔几轮强制审查一次设定（只做兜底，主判断还是每轮由模型自己做） */
-const REVIEW_EVERY = 6
+const REVIEW_EVERY = 3
 
 /** 一轮对话里最多连续调用几次工具，防止模型来回搜不停 */
 const MAX_TOOL_ROUNDS = 3
@@ -251,6 +252,8 @@ interface AppState {
   removePrompt: (id: string) => void
   applyPrompt: (prompt: PromptItem) => Promise<void>
 
+  /** GitHub 最新 Release（只在安卓端检查）；null = 已是最新或还没查 */
+  updateInfo: UpdateInfo | null
   init: () => Promise<void>
   saveConfig: (patch: Partial<ChatConfig>) => void
   setDraft: (text: string) => void
@@ -713,6 +716,7 @@ export const useApp = create<AppState>()((set, get) => {
     models: [],
     modelsLoading: false,
     modelsError: null,
+    updateInfo: null,
 
     async init() {
       // 以前「应用提示词」写的是全局 systemPrompt。改成按会话选之后，
@@ -742,6 +746,8 @@ export const useApp = create<AppState>()((set, get) => {
         turns: current ? await getRepo().listTurns(current.id) : [],
         draft: localStorage.getItem(draftKey(current?.id ?? null)) ?? '',
       })
+      // 新版本检查：节流在 update.ts 内部，失败静默
+      void checkUpdate().then((info) => set({ updateInfo: info }))
     },
 
     saveConfig(patch) {

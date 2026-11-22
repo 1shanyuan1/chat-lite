@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 盲人摸象 · 线稿拼装：每件物件独立可认，摆成大象的位置（没有眼睛——没人摸到眼睛） -->
+  <g fill="none" stroke="#111111">
+    <!-- 尾巴：绳子 -->
+    <path d="M 210 396 C 156 436, 146 516, 168 580" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="168" cy="580" r="13" fill="#111111" stroke="none"/>
+    <!-- 耳朵：蒲扇（立在墙与头的交接处） -->
+    <path d="M 640 336 L 640 171 A 165 165 0 0 0 475 336 Z" stroke-width="26" stroke-linejoin="round"/>
+    <!-- 身体：墙 -->
+    <rect x="210" y="336" width="440" height="320" rx="40" stroke-width="30"/>
+    <!-- 腿：柱子 -->
+    <rect x="235" y="690" width="46" height="110" rx="23" stroke-width="22"/>
+    <rect x="350" y="690" width="46" height="110" rx="23" stroke-width="22"/>
+    <rect x="485" y="690" width="46" height="110" rx="23" stroke-width="22"/>
+    <rect x="575" y="690" width="46" height="110" rx="23" stroke-width="22"/>
+    <!-- 鼻子：蛇 -->
+    <path d="M 785 478 C 835 575, 830 690, 740 750 C 660 805, 560 790, 510 740" stroke-width="46" stroke-linecap="round"/>
+    <!-- 头：石头 -->
+    <rect x="668" y="226" width="190" height="240" rx="40" stroke-width="30"/>
+    <!-- 牙：长矛 -->
+    <path d="M 850 480 L 886 550" stroke-width="16" stroke-linecap="round"/>
+  </g>
+</svg>

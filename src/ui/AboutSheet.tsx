@@ -4,6 +4,8 @@ import remarkGfm from 'remark-gfm'
 // 版本号与 package.json 保持一致，和 App.tsx 同款做法
 import packageInfo from '../../package.json'
 import { platform } from '@/platform'
+import { useApp } from '@/chat/store'
+import { checkUpdate } from '@/chat/update'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon } from './icons'
 import { ABOUT_INTRO, ABOUT_CREDITS } from './about-text'
 import { SUPPORT_MD } from './support-text'
@@ -96,8 +98,20 @@ export default function AboutSheet({ onClose }: { onClose: () => void }) {
 /** 主页面：定位一句话 + 入口 + 作者联系方式 */
 function AboutMain({ onOpen }: { onOpen: (view: View) => void }) {
   const [note, setNote] = useState('')
+  const { updateInfo } = useApp()
   return (
     <div className="px-1">
+      {updateInfo && (
+        <button
+          className="mb-4 flex w-full items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left"
+          onClick={() => platform().openLink(updateInfo.url)}
+        >
+          <span className="flex-1 text-xs leading-relaxed text-amber-800">
+            新版本 {updateInfo.tag} 已发布，点此下载
+          </span>
+          <ChevronRightIcon size={14} className="text-amber-500" />
+        </button>
+      )}
       <div className="mt-8 text-center">
         <img src="/logo.svg" alt="Chat Lite logo" className="mx-auto h-20 w-20 rounded-2xl" />
         <div className="mt-3 text-lg font-medium text-neutral-800">Chat Lite</div>
@@ -216,25 +230,44 @@ function Manual() {
   )
 }
 
-/** 更新日志：没有条目时给一个空态 */
+/** 更新日志：没有条目时给一个空态；底部带手动检查更新 */
 function Changelog() {
-  if (CHANGELOG.length === 0) {
-    return <p className="mt-12 text-center text-xs text-neutral-400">还没有更新记录。</p>
+  const [note, setNote] = useState('')
+  const [checking, setChecking] = useState(false)
+  const check = async () => {
+    setChecking(true)
+    const info = await checkUpdate(true)
+    setNote(info ? `新版本 ${info.tag} 可用，去关于页下载` : '已是最新版本')
+    setChecking(false)
   }
   return (
     <div className="text-[13px] leading-relaxed text-neutral-600">
-      {CHANGELOG.map((entry) => (
-        <section key={`${entry.version}-${entry.date}`} className="mt-6">
-          <h2 className="text-sm font-semibold text-neutral-800">
-            v{entry.version} · {entry.date}
-          </h2>
-          <div className="md mt-1.5">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-              {entry.items.join('\n')}
-            </ReactMarkdown>
-          </div>
-        </section>
-      ))}
+      {CHANGELOG.length === 0 ? (
+        <p className="mt-12 text-center text-xs text-neutral-400">还没有更新记录。</p>
+      ) : (
+        CHANGELOG.map((entry) => (
+          <section key={`${entry.version}-${entry.date}`} className="mt-6">
+            <h2 className="text-sm font-semibold text-neutral-800">
+              v{entry.version} · {entry.date}
+            </h2>
+            <div className="md mt-1.5">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                {entry.items.join('\n')}
+              </ReactMarkdown>
+            </div>
+          </section>
+        ))
+      )}
+      <div className="mt-10 text-center">
+        <button
+          className="rounded-lg border border-neutral-200 px-4 py-1.5 text-xs text-neutral-500 disabled:opacity-50"
+          disabled={checking}
+          onClick={() => void check()}
+        >
+          {checking ? '检查中…' : '检查更新'}
+        </button>
+        {note && <p className="mt-2 text-[11px] text-neutral-400">{note}</p>}
+      </div>
     </div>
   )
 }

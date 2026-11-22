@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 大象 A · 巨耳派：耳朵占半壁江山，眼睛极小，身体缩成一小坨 -->
+  <circle cx="210" cy="430" r="230" fill="#A5B6C8"/>
+  <circle cx="814" cy="430" r="230" fill="#A5B6C8"/>
+  <ellipse cx="210" cy="445" rx="138" ry="178" fill="#7E93A8"/>
+  <ellipse cx="814" cy="445" rx="138" ry="178" fill="#7E93A8"/>
+  <rect x="402" y="810" width="48" height="140" rx="24" fill="#9FB2C4"/>
+  <rect x="500" y="810" width="48" height="140" rx="24" fill="#9FB2C4"/>
+  <ellipse cx="512" cy="760" rx="195" ry="115" fill="#B7C6D6"/>
+  <circle cx="512" cy="440" r="248" fill="#B7C6D6"/>
+  <path d="M 512 600 C 512 780, 498 866, 578 906 C 652 940, 706 884, 690 826" fill="none" stroke="#B7C6D6" stroke-width="88" stroke-linecap="round"/>
+  <circle cx="427" cy="398" r="20" fill="#2B313B"/>
+  <circle cx="597" cy="398" r="20" fill="#2B313B"/>
+  <ellipse cx="372" cy="486" rx="44" ry="28" fill="#F2A6B8" opacity="0.75"/>
+  <ellipse cx="652" cy="486" rx="44" ry="28" fill="#F2A6B8" opacity="0.75"/>
+</svg>

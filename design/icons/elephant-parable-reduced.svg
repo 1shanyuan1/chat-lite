@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 盲人摸象 · 极简版：只留 蒲扇(耳) 墙(身) 柱子(腿) 石头(头)，去掉牙/鼻子/尾巴 -->
+  <g fill="none" stroke="#111111">
+    <!-- 耳朵：蒲扇（立在墙与头的交接处） -->
+    <path d="M 640 336 L 640 171 A 165 165 0 0 0 475 336 Z" stroke-width="26" stroke-linejoin="round"/>
+    <!-- 身体：墙 -->
+    <rect x="210" y="336" width="440" height="320" rx="40" stroke-width="30"/>
+    <!-- 腿：柱子 -->
+    <rect x="235" y="690" width="46" height="110" rx="23" stroke-width="22"/>
+    <rect x="350" y="690" width="46" height="110" rx="23" stroke-width="22"/>
+    <rect x="485" y="690" width="46" height="110" rx="23" stroke-width="22"/>
+    <rect x="575" y="690" width="46" height="110" rx="23" stroke-width="22"/>
+    <!-- 头：石头 -->
+    <rect x="668" y="226" width="190" height="240" rx="40" stroke-width="30"/>
+  </g>
+</svg>

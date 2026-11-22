@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 大象 B · 巨鼻派：鼻子比腿长得多，拖过整个画面再卷起来 -->
+  <path d="M 96 470 C 58 560, 92 650, 66 716" fill="none" stroke="#9FB2C4" stroke-width="16" stroke-linecap="round"/>
+  <circle cx="66" cy="722" r="16" fill="#7E93A8"/>
+  <rect x="196" y="760" width="56" height="150" rx="26" fill="#9FB2C4"/>
+  <rect x="300" y="770" width="56" height="150" rx="26" fill="#9FB2C4"/>
+  <rect x="430" y="770" width="56" height="150" rx="26" fill="#9FB2C4"/>
+  <rect x="530" y="760" width="56" height="150" rx="26" fill="#9FB2C4"/>
+  <ellipse cx="380" cy="550" rx="300" ry="245" fill="#B7C6D6"/>
+  <circle cx="700" cy="460" r="195" fill="#B7C6D6"/>
+  <ellipse cx="636" cy="452" rx="112" ry="152" fill="#7E93A8"/>
+  <path d="M 668 600 C 656 750, 570 852, 430 884 C 312 908, 208 886, 176 806" fill="none" stroke="#B7C6D6" stroke-width="74" stroke-linecap="round"/>
+  <circle cx="748" cy="408" r="18" fill="#2B313B"/>
+  <ellipse cx="806" cy="470" rx="34" ry="22" fill="#F2A6B8" opacity="0.75"/>
+</svg>

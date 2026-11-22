@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 几何拼贴 · 彩色：每件盲人摸到的物件一种颜色 -->
+  <g>
+    <!-- 头：石头（描边紫） -->
+    <rect x="630" y="220" width="230" height="250" rx="40" fill="none" stroke="#8B5CF6" stroke-width="28"/>
+    <!-- 耳朵：蒲扇（实心蓝） -->
+    <path d="M 330 370 L 330 220 A 150 150 0 0 0 180 370 Z" fill="#3B82F6"/>
+    <!-- 身体：墙（实心黑） -->
+    <rect x="210" y="340" width="460" height="320" rx="36" fill="#111111"/>
+    <!-- 腿：柱子（实心琥珀） -->
+    <rect x="260" y="690" width="44" height="120" rx="22" fill="#F59E0B"/>
+    <rect x="360" y="690" width="44" height="104" rx="22" fill="#F59E0B"/>
+    <rect x="500" y="690" width="44" height="104" rx="22" fill="#F59E0B"/>
+    <rect x="600" y="690" width="44" height="120" rx="22" fill="#F59E0B"/>
+  </g>
+</svg>

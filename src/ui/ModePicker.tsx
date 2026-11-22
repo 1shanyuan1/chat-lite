@@ -19,6 +19,7 @@ export default function ModePicker() {
   const {
     config,
     setPack,
+    saveConfig,
     settings,
     prompts,
     pendingPromptId,
@@ -37,6 +38,7 @@ export default function ModePicker() {
   const [showAllGreetings, setShowAllGreetings] = useState(false)
 
   const isMinimal = pack.id === 'minimal'
+  const isWriting = pack.id === 'writing'
   const isTavern = pack.id === 'tavern'
   const userName = config.userName ?? '你'
 
@@ -44,6 +46,16 @@ export default function ModePicker() {
   const available = isTavern
     ? settings.filter((d) => d.kind === 'character' || d.kind === 'world')
     : settings.filter((d) => d.kind === 'setting')
+
+  // 分组展示：酒馆按角色卡 / 世界书分，写作就是设定；组可折叠，多了不糊成一团
+  const groups = isTavern
+    ? [
+        { key: 'cards', title: '角色卡', docs: available.filter((d) => d.kind === 'character') },
+        { key: 'worlds', title: '世界书', docs: available.filter((d) => d.kind === 'world') },
+      ].filter((g) => g.docs.length > 0)
+    : available.length > 0
+      ? [{ key: 'settings', title: '设定', docs: available }]
+      : []
 
   const pickedDocs = pendingSettingIds
     .map((id) => settings.find((d) => d.id === id))
@@ -90,6 +102,36 @@ export default function ModePicker() {
           )
         })}
       </div>
+
+      {/* 模式开关直接放起始页：长记忆归极简，设定发展归写作，省得去设置里翻 */}
+      {isMinimal && (
+        <div className="mt-3 flex items-center justify-between rounded-xl border border-neutral-200 px-3 py-2">
+          <span className="min-w-0 pr-2">
+            <span className="block text-[12px] text-neutral-700">长记忆</span>
+            <span className="block text-[10px] leading-tight text-neutral-400">AI 会自己记下关于你的事，赞 / 踩可纠偏</span>
+          </span>
+          <button
+            className={`shrink-0 rounded-full px-3 py-1 text-[11px] ${config.longMemory ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
+            onClick={() => saveConfig({ longMemory: !config.longMemory })}
+          >
+            {config.longMemory ? '已开启' : '已关闭'}
+          </button>
+        </div>
+      )}
+      {isWriting && (
+        <div className="mt-3 flex items-center justify-between rounded-xl border border-neutral-200 px-3 py-2">
+          <span className="min-w-0 pr-2">
+            <span className="block text-[12px] text-neutral-700">设定发展模式</span>
+            <span className="block text-[10px] leading-tight text-neutral-400">新开对话挂发展稿，AI 边写边补设定；对已有对话不生效</span>
+          </span>
+          <button
+            className={`shrink-0 rounded-full px-3 py-1 text-[11px] ${config.settingEvolution ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
+            onClick={() => saveConfig({ settingEvolution: !config.settingEvolution })}
+          >
+            {config.settingEvolution ? '已开启' : '已关闭'}
+          </button>
+        </div>
+      )}
 
       {prompts.length > 0 && (
         <div className="mt-5">
@@ -153,52 +195,18 @@ export default function ModePicker() {
               </p>
             </div>
           ) : (
-            <div className="space-y-1.5">
-              {available.map((doc) => {
-                const active = pendingSettingIds.includes(doc.id)
-                // 列一下这段数，用户才知道这张卡有几段开场可选
-                const count = isTavern ? greetingsOf(doc, userName).length : 0
-                const greetingHint = count > 1 ? ` · ${count} 段开场` : count === 1 ? ' · 有开场白' : ''
-                return (
-                  <div
-                    key={doc.id}
-                    className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${
-                      active ? 'border-neutral-900 bg-neutral-50' : 'border-neutral-200'
-                    }`}
-                  >
-                    <button
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                      onClick={() => togglePendingSetting(doc.id)}
-                    >
-                      {doc.avatar ? (
-                        <img src={doc.avatar} alt={doc.name} className="h-8 w-8 shrink-0 rounded-lg object-cover" />
-                      ) : (
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-[11px] text-neutral-400">
-                          {doc.name.slice(0, 1)}
-                        </div>
-                      )}
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] text-neutral-800">{doc.name}</span>
-                        <span className="block truncate text-[10px] text-neutral-400">
-                          {doc.entries.length} 条条目{greetingHint}
-                        </span>
-                      </span>
-                    </button>
-                    <span
-                      className={`h-4 w-4 shrink-0 rounded-full border ${
-                        active ? 'border-neutral-900 bg-neutral-900' : 'border-neutral-300'
-                      }`}
-                    />
-                    <button
-                      className="shrink-0 text-[10px] text-neutral-300 active:text-red-500"
-                      onClick={() => removeSetting(doc.id)}
-                    >
-                      删
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
+            groups.map((g) => (
+              <DocGroup
+                key={g.key}
+                title={g.title}
+                docs={g.docs}
+                pending={pendingSettingIds}
+                isTavern={isTavern}
+                userName={userName}
+                onToggle={togglePendingSetting}
+                onRemove={removeSetting}
+              />
+            ))
           )}
 
           {greetingDocs.length > 0 ? (
@@ -275,6 +283,97 @@ export default function ModePicker() {
                   ? '勾一张角色卡，有开场白的会先让你挑一段。'
                   : '也可以什么都不挂，直接开始写。'}
             </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 一组可勾选的设定 / 角色卡。组可折叠；组内超过 6 个先铺前 6 个，点「展开全部」看剩下的。
+ * 删除按钮原来就贴在勾选圈旁边，手一滑就是误删——现在点了会先确认一次。
+ */
+function DocGroup({
+  title,
+  docs,
+  pending,
+  isTavern,
+  userName,
+  onToggle,
+  onRemove,
+}: {
+  title: string
+  docs: SettingDoc[]
+  pending: string[]
+  isTavern: boolean
+  userName: string
+  onToggle: (id: string) => void
+  onRemove: (id: string) => void
+}) {
+  const [folded, setFolded] = useState(() => docs.length > 8)
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? docs : docs.slice(0, 6)
+  return (
+    <div className="mb-1.5">
+      <button className="flex w-full items-center justify-between py-1.5" onClick={() => setFolded((v) => !v)}>
+        <span className="text-[11px] text-neutral-500">
+          {title} · {docs.length}
+        </span>
+        <span className="text-[10px] text-neutral-300">{folded ? '展开 ▾' : '收起 ▴'}</span>
+      </button>
+      {!folded && (
+        <div className="space-y-1.5">
+          {shown.map((doc) => {
+            // 列一下这段数，用户才知道这张卡有几段开场可选
+            const count = isTavern ? greetingsOf(doc, userName).length : 0
+            const greetingHint = count > 1 ? ` · ${count} 段开场` : count === 1 ? ' · 有开场白' : ''
+            const active = pending.includes(doc.id)
+            return (
+              <div
+                key={doc.id}
+                className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${
+                  active ? 'border-neutral-900 bg-neutral-50' : 'border-neutral-200'
+                }`}
+              >
+                <button
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  onClick={() => onToggle(doc.id)}
+                >
+                  {doc.avatar ? (
+                    <img src={doc.avatar} alt={doc.name} className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+                  ) : (
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-[11px] text-neutral-400">
+                      {doc.name.slice(0, 1)}
+                    </div>
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] text-neutral-800">{doc.name}</span>
+                    <span className="block truncate text-[10px] text-neutral-400">
+                      {doc.entries.length} 条条目{greetingHint}
+                    </span>
+                  </span>
+                </button>
+                <span
+                  className={`h-4 w-4 shrink-0 rounded-full border ${
+                    active ? 'border-neutral-900 bg-neutral-900' : 'border-neutral-300'
+                  }`}
+                />
+                <button
+                  className="shrink-0 text-[10px] text-neutral-300 active:text-red-500"
+                  onClick={() => {
+                    if (confirm(`删除「${doc.name}」？删除后不可恢复。`)) onRemove(doc.id)
+                  }}
+                >
+                  删
+                </button>
+              </div>
+            )
+          })}
+          {docs.length > 6 && !expanded && (
+            <button className="w-full py-1 text-[11px] text-neutral-400" onClick={() => setExpanded(true)}>
+              展开全部 {docs.length} 个
+            </button>
           )}
         </div>
       )}
