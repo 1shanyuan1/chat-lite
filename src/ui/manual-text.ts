@@ -293,7 +293,7 @@ export const MANUAL_SECTIONS: ManualSection[] = [
 - 重要会话用「导出」留档；角色卡与设定在寄存区导出
 - 网页版 localStorage 约 5MB，带图片或长文档的会话多了会写不进去，建议用安卓版
 
-应用只会在检查更新时访问 GitHub；搜索与对话请求只发给你自己配置的接口。`,
+应用只会在检查更新时访问官网（ifno.fun）；搜索与对话请求只发给你自己配置的接口。`,
   },
   {
     id: 'faq',

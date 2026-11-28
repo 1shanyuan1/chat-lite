@@ -37,6 +37,7 @@ import Markdown from '@/ui/Markdown'
 import QuickReplies from '@/ui/QuickReplies'
 import GroupSpeakers from '@/ui/GroupSpeakers'
 import GroupPanel from '@/ui/GroupPanel'
+import { thDomMessage } from '@/ui/th-message-id'
 import { mountThRuntime } from '@/chat/th-runtime'
 import {
   ChevronDownIcon,
@@ -1948,10 +1949,11 @@ export default function AppNext() {
               key={turn.id}
               className="mb-8 mes"
               ref={(el) => {
-                // 酒馆生态脚本的 ST DOM 锚点：.mes[mesid][is_user]
+                // 酒馆生态脚本的 ST DOM 锚点：.mes[mesid][is_user]，id 与 TH 扁平消息表对齐
                 if (el) {
-                  el.setAttribute('mesid', String(turn.idx))
-                  el.setAttribute('is_user', 'false')
+                  const dom = thDomMessage(turns, turn.id)
+                  el.setAttribute('mesid', String(dom.mesid))
+                  el.setAttribute('is_user', String(dom.isUser))
                 }
               }}
             >

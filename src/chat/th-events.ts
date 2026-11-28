@@ -31,6 +31,24 @@ export function fireThEvent(name: string, data?: unknown): void {
   }
 }
 
+/**
+ * 需要等脚本处理完再继续的事件（目前只有 GENERATION_AFTER_COMMANDS）。
+ * 卡脚本常在这里异步读写变量、注册本轮提示词注入；不等它，宿主会拿着空注册表去组装请求。
+ */
+export async function fireThEventAsync(name: string, data?: unknown): Promise<void> {
+  const set = handlers.get(name)
+  if (!set) return
+  await Promise.all(
+    [...set].map(async (fn) => {
+      try {
+        await fn(data)
+      } catch (error) {
+        console.warn(`[TH] 事件 ${name} 的订阅者抛错:`, error)
+      }
+    })
+  )
+}
+
 /** 与 tavern_events 常量同值路由 */
 export const TH_EVENTS = {
   GENERATION_STARTED: 'GENERATION_STARTED',

@@ -58,7 +58,7 @@ import { describeAttachments } from './vision'
 import { withCredential } from './credentials'
 import { buildDepthInjections, contextWindow, injectDepthMessages, matchWorldEntries, renderWorldEntries, splitWorldEntries, type DepthInjection } from './lore'
 import { extractSpeaker, parseMentionTarget } from './settings'
-import { bindThStore } from './th-runtime'
+import { bindThStore, takeThPromptInjections } from './th-runtime'
 import { DEFAULT_PACK_ID, findPack, renderTemplate } from './packs'
 import { PROVIDERS, findProvider } from './providers'
 import { fetchModels, loadCachedModels, type ModelInfo } from './models'
@@ -68,7 +68,7 @@ import type { WireMessage, WireTool } from './protocol'
 import { applyMacros } from './characters'
 import { applyPromptRegex } from './card-regex'
 import { applyUpdateVariables, expandVarMacros } from './variables'
-import { fireThEvent, TH_EVENTS } from './th-events'
+import { fireThEvent, fireThEventAsync, TH_EVENTS } from './th-events'
 import { buildPrompt, type PromptInput } from './prompt/build'
 import {
   UPDATE_SETTING_TOOL,
@@ -172,8 +172,7 @@ function wireHistory(
   uptoIdx: number,
   imageResendTurns: number,
   labelSpeakers = false
-): WireTurn[] {
-  const out: WireTurn[] = []
+): WireTurn[] {  const out: WireTurn[] = []
   // 图片只保留最近 N 轮（含本轮）：历史里的原图每一轮都会重新计费，
   // 更早的换成占位说明，模型知道有图但看不到。识图描述本来就是文字，不受影响。
   const keepFrom = uptoIdx - (imageResendTurns - 1)
@@ -209,6 +208,23 @@ function wireHistory(
     }
   }
   return out
+}
+
+/**
+ * 某一轮的 AI 消息在 TH 扁平消息表里的 id（用户/助手各算一条）。
+ * 酒馆生态脚本用 DOM mesid 读写变量，事件里必须给这个 id，不能给轮次号。
+ */
+function assistantFlatId(turns: ChatTurn[], turnId: string): number {
+  let flat = 0
+  for (const turn of turns) {
+    const variant = activeVariant(turn)
+    if (hasContent(variant.user.content, variant.user.attachments)) flat++
+    if (variant.assistant) {
+      if (turn.id === turnId) return flat
+      flat++
+    }
+  }
+  return Math.max(0, flat - 1)
 }
 
 interface AppState {
@@ -490,7 +506,22 @@ export const useApp = create<AppState>()((set, get) => {
     const turnIdx = get().turns.find((t) => t.id === turnId)?.idx ?? 0
 
     // 酒馆生态事件：命令已处理、即将组装提示词（卡脚本在此写变量/设定）
-    fireThEvent(TH_EVENTS.GENERATION_AFTER_COMMANDS, { sessionId, turnId })
+    // 必须等异步脚本跑完：状态栏/衣柜在 GENERATION_AFTER_COMMANDS 里注册本轮注入
+    await fireThEventAsync(TH_EVENTS.GENERATION_AFTER_COMMANDS, { sessionId, turnId })
+    const injectedPrompts = takeThPromptInjections()
+    const injectedSystem = injectedPrompts
+      .filter((item) => item.position === 'none')
+      .map((item) => applyMacros(item.content, docs[0]?.name ?? '', userName))
+      .filter(Boolean)
+      .join('\n\n')
+    const injectedChatPrompts = injectedPrompts
+      .filter((item) => item.position === 'in_chat')
+      .map((item) => ({
+        content: applyMacros(item.content, docs[0]?.name ?? '', userName),
+        depth: Math.max(0, item.depth ?? 0),
+        role: item.role ?? 'system',
+      }))
+      .filter((item) => item.content.trim())
 
     // 所有提示词在这里一次性组装。调用方只填原料，顺序由 buildPrompt 的 SLOTS 决定——
     // 以前这里是 10 个位置参数，加一层就得改签名、改测试、改调用点。
@@ -506,7 +537,7 @@ export const useApp = create<AppState>()((set, get) => {
       recap: session?.systemPrompt,
       prompt: sessionPrompt?.text,
       postHistory,
-      steer: extraSystem,
+      steer: [extraSystem, injectedSystem].filter(Boolean).join('\n\n'),
       review: evolution && turnIdx > 0 && turnIdx % REVIEW_EVERY === 0 ? reviewNudge() : '',
     }
     const built = buildPrompt(promptInput)
@@ -539,6 +570,27 @@ export const useApp = create<AppState>()((set, get) => {
         content: applyMacros(doc.depthPrompt.prompt, doc.name, userName),
         depth: doc.depthPrompt.depth ?? 4,
         role: doc.depthPrompt.role === 'user' ? 'user' : doc.depthPrompt.role === 'assistant' ? 'assistant' : 'system',
+      })
+    }
+    // 卡脚本在 GENERATION_AFTER_COMMANDS 里注册的本轮注入（状态栏的换装/亲昵指令等）
+    for (const item of injectedChatPrompts) {
+      depthInjections.push({ content: item.content, depth: item.depth, role: item.role })
+    }
+    // MVU 卡：历史里的 <UpdateVariable> 会被 [不发送] 正则清掉，必须把当前 stat_data 注回提示词
+    const mvuLike = docs.some((doc) =>
+      (doc.helperScripts ?? []).some((script) => /mvu|magvarupdate/i.test(`${script.name}\n${script.content}`))
+    )
+    const realMvu =
+      typeof window !== 'undefined' &&
+      Boolean((window as unknown as { Mvu?: { version?: string } }).Mvu) &&
+      (window as unknown as { Mvu?: { version?: string } }).Mvu?.version !== 'chat-lite-minimal'
+    const statVars = session?.variables ?? {}
+    const hasStatusInjection = injectedPrompts.some((item) => item.content.includes('<status_current_variable>'))
+    if (mvuLike && !realMvu && !hasStatusInjection && Object.keys(statVars).length > 0) {
+      depthInjections.push({
+        content: `<status_current_variable>\n${JSON.stringify(statVars)}\n</status_current_variable>`,
+        depth: 0,
+        role: 'system',
       })
     }
     const depthHistory = injectDepthMessages(scriptedHistory, depthInjections)
@@ -619,7 +671,7 @@ export const useApp = create<AppState>()((set, get) => {
             if (Date.now() - lastPersist > 900) {
               lastPersist = Date.now()
               void persistTurn(turnId)
-              fireThEvent(TH_EVENTS.MESSAGE_UPDATED, turnIdx)
+              fireThEvent(TH_EVENTS.MESSAGE_UPDATED, assistantFlatId(get().turns, turnId))
             }
           }
         }
@@ -746,9 +798,10 @@ export const useApp = create<AppState>()((set, get) => {
       fireThEvent(TH_EVENTS.VARIABLE_UPDATE_ENDED, { sessionId, vars: nextVars })
     }
     // 酒馆生态事件：本轮完成（全局脚本在此渲染状态栏等）
-    fireThEvent(TH_EVENTS.MESSAGE_UPDATED, turnIdx)
-    fireThEvent(TH_EVENTS.MESSAGE_RECEIVED, turnIdx)
-    fireThEvent(TH_EVENTS.CHARACTER_MESSAGE_RENDERED, turnIdx)
+    const messageId = assistantFlatId(get().turns, turnId)
+    fireThEvent(TH_EVENTS.MESSAGE_UPDATED, messageId)
+    fireThEvent(TH_EVENTS.MESSAGE_RECEIVED, messageId)
+    fireThEvent(TH_EVENTS.CHARACTER_MESSAGE_RENDERED, messageId)
     fireThEvent(TH_EVENTS.GENERATION_ENDED, { sessionId, turnId })
 
     // 挂了角色卡的会话保留角色名做标题——改成第一句话反而看不出是谁；
@@ -1679,7 +1732,7 @@ export const useApp = create<AppState>()((set, get) => {
       const updated: ChatTurn = { ...turn, active: index }
       set({ turns: turns.map((t) => (t.id === turnId ? updated : t)) })
       await getRepo().updateTurn(updated)
-      fireThEvent(TH_EVENTS.MESSAGE_SWIPED, turn.idx)
+      fireThEvent(TH_EVENTS.MESSAGE_SWIPED, assistantFlatId(get().turns, turnId))
     },
 
     /**

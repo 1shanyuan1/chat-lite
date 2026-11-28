@@ -11,6 +11,27 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '2026.11.28.2',
+    date: '2026-11-28',
+    items: [
+      '### 酒馆面板交互闭环',
+      '- 修复状态栏「衣柜 / 亲昵互动」只改变量、不进下一轮提示词的问题：补齐 TavernHelper 的 injectPrompts / uninjectPrompts，并在生成前等待卡脚本完成本轮注入',
+      '- MVU 卡的历史 <UpdateVariable> 会被提示词正则清掉；现在每轮自动把当前 stat_data 以 <status_current_variable> 注回提示词',
+      '- Mvu API 同时接受 (type, message_id) 与 ({ type, message_id }) 两种写法，写入后触发 VARIABLE_UPDATE_ENDED，面板即时刷新',
+      '- 修复消息编号：DOM 的 mesid 与 TH 扁平消息 id 对齐，生成事件传正确消息 id，状态栏不再挂错楼层',
+      '- 最新楼层修改消息变量时同步会话变量，下一轮读到的是新衣着/新互动，而不是上一版',
+      '- 补齐 replaceVariables / updateVariablesWith、getChatMessages().data，兼容更多酒馆助手脚本',
+      '',
+      '### 升级通道',
+      '- 软件内「检查更新」改为读取官网版本清单（ifno.fun/chat-lite/version.json），下载与升级跳转一律走官网，不再依赖 GitHub Releases',
+      '- 关于页与更新日志页的「去官网下载」按钮指向官网直下包',
+      '',
+      '### 验证',
+      '- 使用「母系世界·全年龄日常」实测：开场面板提交 → 状态栏渲染 → 换装/摸头 → 下一轮请求包含新衣着、<本轮在场角色着装>、<本轮亲昵互动> 与当前 stat_data',
+      '- selfcheck 扩到 876 项；类型检查与生产构建通过',
+    ],
+  },
+  {
     version: '2026.11.28.1',
     date: '2026-11-28',
     items: [

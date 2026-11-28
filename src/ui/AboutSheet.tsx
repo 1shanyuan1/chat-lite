@@ -107,7 +107,7 @@ function AboutMain({ onOpen }: { onOpen: (view: View) => void }) {
           onClick={() => platform().openLink(updateInfo.url)}
         >
           <span className="flex-1 text-xs leading-relaxed text-amber-800">
-            新版本 {updateInfo.tag} 已发布，点此下载
+            新版本 {updateInfo.tag} 已发布，去官网下载
           </span>
           <ChevronRightIcon size={14} className="text-amber-500" />
         </button>
@@ -233,11 +233,13 @@ function Manual() {
 /** 更新日志：没有条目时给一个空态；底部带手动检查更新 */
 function Changelog() {
   const [note, setNote] = useState('')
+  const [found, setFound] = useState<{ tag: string; url: string } | null>(null)
   const [checking, setChecking] = useState(false)
   const check = async () => {
     setChecking(true)
     const info = await checkUpdate(true)
-    setNote(info ? `新版本 ${info.tag} 可用，去关于页下载` : '已是最新版本')
+    setFound(info)
+    setNote(info ? `新版本 ${info.tag} 可用` : '已是最新版本')
     setChecking(false)
   }
   return (
@@ -267,6 +269,14 @@ function Changelog() {
           {checking ? '检查中…' : '检查更新'}
         </button>
         {note && <p className="mt-2 text-[11px] text-neutral-400">{note}</p>}
+        {found && (
+          <button
+            className="mt-2 rounded-lg bg-neutral-900 px-4 py-1.5 text-xs text-white"
+            onClick={() => platform().openLink(found.url)}
+          >
+            去官网下载
+          </button>
+        )}
       </div>
     </div>
   )

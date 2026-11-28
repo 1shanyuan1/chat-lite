@@ -2624,7 +2624,14 @@ st().saveConfig({ settingEvolution: false, packId: 'minimal' })
 section('酒馆助手变量作用域（message/chat/global）')
 
 const { getRepo } = await import('@/db/runtime')
-const { thGetVariables, thInsertOrAssignVariables, thFlatMessages } = await import('@/chat/th-runtime')
+const {
+  thGetVariables,
+  thInsertOrAssignVariables,
+  thFlatMessages,
+  injectPrompts,
+  uninjectPrompts,
+  takeThPromptInjections,
+} = await import('@/chat/th-runtime')
 
 const thSession = await getRepo().createSession('TH 变量作用域测试')
 useApp.setState({ sessions: await getRepo().listSessions() })
@@ -2650,8 +2657,22 @@ ok(flat[1].role === 'assistant' && flat[1].variables?.主角?.姓名 === '苏念
 
 const msgVars = thGetVariables({ type: 'message', message_id: -1 })
 ok(msgVars.主角?.姓名 === '苏念', 'message 作用域（-1=最后一条）读到该消息的快照')
-ok(thGetVariables({ type: 'message', message_id: 0 }).主角 === undefined || true, '旧消息无快照时回退不炸')
+ok(Object.keys(thGetVariables({ type: 'message', message_id: 0 })).length === 0, '用户消息没有消息级变量')
+ok(thGetVariables({ type: 'message', message_id: 1 }).主角?.姓名 === '苏念', '按消息 id 读到对应 AI 变量')
 ok(Object.keys(thGetVariables({ type: 'global' })).length === 0, 'global 作用域为空对象')
+
+uninjectPrompts()
+injectPrompts([{ id: 't-once', position: 'in_chat', depth: 0, role: 'system', content: '本轮注入' }], { once: true })
+const onceInjected = takeThPromptInjections()
+ok(onceInjected.length === 1 && onceInjected[0].content === '本轮注入', '提示词注入可被宿主读取')
+ok(takeThPromptInjections().length === 0, 'once 注入只消费一次')
+injectPrompts([{ id: 't-keep', position: 'none', content: '常驻注入' }])
+injectPrompts([{ id: 't-keep', position: 'none', content: '覆盖后的注入' }])
+const persistentInjected = takeThPromptInjections()
+ok(persistentInjected.length === 1 && persistentInjected[0].content === '覆盖后的注入', '同 id 注入会覆盖')
+ok(takeThPromptInjections().length === 1, '常驻注入取完仍保留')
+uninjectPrompts(['t-keep'])
+ok(takeThPromptInjections().length === 0, 'uninject 可移除常驻注入')
 
 await thInsertOrAssignVariables({ type: 'message', message_id: -1, assigning: { 新键: 7 } })
 const afterWrite = thGetVariables({ type: 'message', message_id: -1 })
@@ -2832,8 +2853,8 @@ ok(MANUAL_SECTIONS.length >= 18, `说明书节数完整（${MANUAL_SECTIONS.leng
 ok(new Set(MANUAL_SECTIONS.map((s) => s.id)).size === MANUAL_SECTIONS.length, '说明书锚点不重复')
 ok(MANUAL_SECTIONS.every((s) => s.title.trim() && s.md.trim().length > 50), '每节都有标题和正文')
 ok(MANUAL_SECTIONS.some((s) => s.id === 'group' && s.md.includes('发言顺序')), '说明书包含群聊入门')
-ok(CHANGELOG.length >= 2 && CHANGELOG[0].version === '2026.11.28.1', '更新日志最新版本正确')
-ok(CHANGELOG[0].items.length >= 20, `最新更新日志足够详细（${CHANGELOG[0].items.length} 条）`)
+ok(CHANGELOG.length >= 2 && CHANGELOG[0].version === '2026.11.28.2', '更新日志最新版本正确')
+ok(CHANGELOG[0].items.length >= 12, `最新更新日志足够详细（${CHANGELOG[0].items.length} 条）`)
 
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))

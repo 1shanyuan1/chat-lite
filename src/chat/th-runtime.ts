@@ -101,6 +101,61 @@ export function thActive(): boolean {
   return mountedDocs.some((doc) => (doc.helperScripts?.length ?? 0) > 0)
 }
 
+/* ---------------- 本轮提示词注入（TavernHelper.injectPrompts） ---------------- */
+
+export interface ThPromptInjection {
+  id?: string
+  position: 'in_chat' | 'none'
+  depth?: number
+  role?: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+interface StoredPromptInjection extends ThPromptInjection {
+  once: boolean
+}
+
+let promptInjections: StoredPromptInjection[] = []
+
+/** 卡脚本在 GENERATION_AFTER_COMMANDS 里注册本轮注入；同 id 覆盖 */
+export function injectPrompts(prompts: unknown, options?: { once?: boolean }): void {
+  if (!Array.isArray(prompts)) return
+  for (const raw of prompts) {
+    if (!raw || typeof raw !== 'object') continue
+    const item = raw as Record<string, unknown>
+    const content = typeof item.content === 'string' ? item.content : ''
+    if (!content.trim()) continue
+    const role = item.role === 'user' || item.role === 'assistant' ? item.role : 'system'
+    const entry: StoredPromptInjection = {
+      id: item.id === undefined ? undefined : String(item.id),
+      position: item.position === 'none' ? 'none' : 'in_chat',
+      depth: Number.isFinite(Number(item.depth)) ? Number(item.depth) : 0,
+      role,
+      content,
+      once: Boolean(options?.once),
+    }
+    const at = entry.id ? promptInjections.findIndex((x) => x.id === entry.id) : -1
+    if (at >= 0) promptInjections[at] = entry
+    else promptInjections.push(entry)
+  }
+}
+
+export function uninjectPrompts(ids?: string[] | string): void {
+  const list = Array.isArray(ids) ? ids.map(String) : ids ? [String(ids)] : []
+  if (list.length === 0) {
+    promptInjections = []
+    return
+  }
+  promptInjections = promptInjections.filter((entry) => !entry.id || !list.includes(entry.id))
+}
+
+/** store 组装请求前取走本轮注入；once 的用完即弃，常驻的留下 */
+export function takeThPromptInjections(): ThPromptInjection[] {
+  const snapshot = promptInjections.map(({ once: _once, ...rest }) => rest)
+  promptInjections = promptInjections.filter((entry) => !entry.once)
+  return snapshot
+}
+
 /* ---------------- ST 形状的消息扁平视图（getChatMessages / 变量定位共用） ---------------- */
 
 interface FlatMessage {
@@ -167,9 +222,12 @@ export function thGetVariables(options?: {
   if (type === 'global') return {}
   const state = thState()
   if (type === 'message') {
-    const flat = resolveMessageIds(flatMessages(), options?.message_id ?? -1)
-    // 消息自己的快照优先；老消息没有就回退会话级（兼容升级前数据）
-    return flat[0]?.variables ?? state.sessions.find((s) => s.id === state.currentId)?.variables ?? {}
+    const target = resolveMessageIds(flatMessages(), options?.message_id ?? -1)[0]
+    if (!target) return {}
+    // 用户消息没有独立变量树；老 AI 消息没快照时才回退会话级
+    if (target.role !== 'assistant') return {}
+    if (target.variables && Object.keys(target.variables).length > 0) return target.variables
+    return state.sessions.find((s) => s.id === state.currentId)?.variables ?? {}
   }
   return state.sessions.find((s) => s.id === state.currentId)?.variables ?? {}
 }
@@ -214,6 +272,9 @@ async function updateMessageVariables(turnId: string, vars: Record<string, unkno
     ),
   }
   await getRepo().updateTurn(updated)
+  // 面板改的是最新楼层时，同步会话变量：下一轮提示词读的是当前状态，不是上一版
+  const latestAi = [...turns].reverse().find((t) => (t.variants[t.active] ?? t.variants[0])?.assistant)
+  if (latestAi?.id === turnId) await s.setSessionVariables(s.currentId, vars)
   setTurns(await getRepo().listTurns(s.currentId))
 }
 
@@ -267,51 +328,67 @@ export function mountThRuntime(docs: SettingDoc[]): void {
  */
 function defineMvuShim(w: Record<string, unknown>): void {
   if (typeof w.Mvu !== 'undefined') return
+  type ScopeType = 'message' | 'chat' | 'global'
+  type ScopeInput = ScopeType | { type?: ScopeType; message_id?: number } | undefined
   const clone = <T,>(v: T): T => (typeof structuredClone === 'function' ? structuredClone(v) : JSON.parse(JSON.stringify(v)))
-  const readData = (type?: 'message' | 'chat' | 'global', message_id?: number): Record<string, unknown> => {
+  // MVU 生态有两套调用习惯：getMvuData('message', 3) 和 getMvuData({ type:'message', message_id:3 })
+  const scopeOf = (arg?: ScopeInput, messageId?: number): { type: ScopeType; message_id?: number } => {
+    if (arg && typeof arg === 'object') {
+      const raw = arg as { type?: ScopeType; message_id?: number }
+      const id = Number(raw.message_id)
+      return { type: raw.type ?? 'message', message_id: Number.isFinite(id) ? id : undefined }
+    }
+    return { type: (arg as ScopeType | undefined) ?? 'message', message_id: messageId }
+  }
+  const readData = (scope: { type: ScopeType; message_id?: number }): Record<string, unknown> => {
     const state = thState()
-    if (type === 'global') return {}
-    if (type === 'chat') return clone(state.sessions.find((s) => s.id === state.currentId)?.variables ?? {})
-    const flat = resolveMessageIds(flatMessages(), message_id ?? -1)
+    if (scope.type === 'global') return {}
+    if (scope.type === 'chat') return clone(state.sessions.find((s) => s.id === state.currentId)?.variables ?? {})
+    const flat = resolveMessageIds(flatMessages(), scope.message_id ?? -1)
     const msgVars = flat[0]?.variables
     // 消息自己的快照优先；老消息没有就回退会话级（兼容升级前数据）
     return clone(msgVars && Object.keys(msgVars).length > 0 ? msgVars : (state.sessions.find((s) => s.id === state.currentId)?.variables ?? {}))
   }
-  const writeData = async (statData: Record<string, unknown>, type?: 'message' | 'chat' | 'global', message_id?: number) => {
+  const writeData = async (statData: Record<string, unknown>, scope: { type: ScopeType; message_id?: number }) => {
     const data = clone(statData)
-    if (type === 'chat') {
+    if (scope.type === 'chat') {
       const state = thState()
       const sessionId = state.currentId
-      if (sessionId) void state.setSessionVariables(sessionId, data)
+      if (sessionId) await state.setSessionVariables(sessionId, data)
       return
     }
+    if (scope.type === 'global') return
     // message 作用域：写进那条 AI 消息的 variables 并持久化
-    const flat = resolveMessageIds(flatMessages(), message_id ?? -1)
+    const flat = resolveMessageIds(flatMessages(), scope.message_id ?? -1)
     const target = flat[0]
     if (!target || target.role !== 'assistant') return
     await updateMessageVariables(target.turnId, clone(data))
   }
+  const commit = (data: { stat_data?: Record<string, unknown> }, scope: { type: ScopeType; message_id?: number }) => {
+    if (data?.stat_data) {
+      void writeData(data.stat_data, scope).then(() => {
+        fireThEvent('VARIABLE_UPDATE_ENDED', { vars: data?.stat_data ?? {} })
+      })
+    }
+    return clone(data ?? {})
+  }
   w.Mvu = {
-    getMvuData: (type?: 'message' | 'chat' | 'global', message_id?: number) => {
-      const stat_data = readData(type, message_id)
+    getMvuData: (arg?: ScopeInput, message_id?: number) => {
+      const stat_data = readData(scopeOf(arg, message_id))
       return { stat_data, display_stat_data: clone(stat_data) }
     },
-    replaceMvuData: (data: { stat_data?: Record<string, unknown> }, type?: 'message' | 'chat' | 'global', message_id?: number) => {
-      if (data?.stat_data) writeData(data.stat_data, type, message_id)
-      return clone(data ?? {})
+    replaceMvuData: (data: { stat_data?: Record<string, unknown> }, arg?: ScopeInput, message_id?: number) => {
+      return commit(data ?? {}, scopeOf(arg, message_id))
     },
-    setMvuData: (data: { stat_data?: Record<string, unknown> }, type?: 'message' | 'chat' | 'global', message_id?: number) => {
-      if (data?.stat_data) writeData(data.stat_data, type, message_id)
-      return clone(data ?? {})
+    setMvuData: (data: { stat_data?: Record<string, unknown> }, arg?: ScopeInput, message_id?: number) => {
+      return commit(data ?? {}, scopeOf(arg, message_id))
     },
-    commitMvuData: (data: { stat_data?: Record<string, unknown> }, type?: 'message' | 'chat' | 'global', message_id?: number) => {
-      if (data?.stat_data) writeData(data.stat_data, type, message_id)
-      fireThEvent('VARIABLE_UPDATE_ENDED', { vars: data?.stat_data ?? {} })
-      return clone(data ?? {})
+    commitMvuData: (data: { stat_data?: Record<string, unknown> }, arg?: ScopeInput, message_id?: number) => {
+      return commit(data ?? {}, scopeOf(arg, message_id))
     },
     parseMvuData: (message: string) => {
       const ops = extractUpdateVariables(String(message ?? ''))
-      const { vars } = applyJsonPatch(readData('message'), ops)
+      const { vars } = applyJsonPatch(readData({ type: 'message' }), ops)
       return { stat_data: vars, display_stat_data: clone(vars) }
     },
     events: {
@@ -339,6 +416,8 @@ function defineThGlobals(w: Record<string, unknown>): void {
   }
   w.eventEmit = (name: string, data?: unknown) => fireThEvent(String(name), data)
   w.eventRemove = (name: string, fn: ThHandler) => thOff(String(name), fn)
+  w.injectPrompts = injectPrompts
+  w.uninjectPrompts = uninjectPrompts
 
   // 酒馆的变量 API 是同步的（数据就在本地）；卡脚本经常不带 await 直接取值
   w.getvar = (path: string) => {
@@ -375,7 +454,7 @@ function defineThGlobals(w: Record<string, unknown>): void {
       is_system: false,
       role: m.role,
       message: m.message,
-      data: {},
+      data: m.variables ? { stat_data: m.variables } : {},
     }))
   }
 
@@ -406,7 +485,14 @@ function defineThGlobals(w: Record<string, unknown>): void {
       }
       await getRepo().appendTurn(turn)
       setTurns(await getRepo().listTurns(sessionId))
-      fireThEvent(msg?.role === 'assistant' ? TH_EVENTS.MESSAGE_RECEIVED : TH_EVENTS.USER_MESSAGE_RENDERED, turn.idx)
+      const flat = flatMessages()
+      const target = flat.find(
+        (m) => m.turnId === turn.id && (msg?.role === 'assistant' ? m.role === 'assistant' : m.role === 'user')
+      )
+      fireThEvent(
+        msg?.role === 'assistant' ? TH_EVENTS.MESSAGE_RECEIVED : TH_EVENTS.USER_MESSAGE_RENDERED,
+        target?.message_id ?? turn.idx
+      )
     }
   }
 
@@ -450,7 +536,12 @@ function defineThGlobals(w: Record<string, unknown>): void {
       if (edits.some((e) => e.turnId === t.id)) await getRepo().updateTurn(t)
     }
     setTurns(turns)
-    fireThEvent(TH_EVENTS.MESSAGE_UPDATED, edits[0]?.turnId)
+    const flatAfter = flatMessages()
+    const first = edits[0]
+    const target =
+      flatAfter.find((m) => m.turnId === first?.turnId && m.role === (first?.role === 'user' ? 'user' : 'assistant')) ??
+      flatAfter.find((m) => m.turnId === first?.turnId)
+    fireThEvent(TH_EVENTS.MESSAGE_UPDATED, target?.message_id ?? 0)
   }
 
   /** v1 近似：删除 = 清空该消息内容（我们的轮次是用户/AI 配对模型，不做真删） */
@@ -488,6 +579,49 @@ function defineThGlobals(w: Record<string, unknown>): void {
     assigning?: Record<string, unknown>
     message_id?: number
   }) => thInsertOrAssignVariables(options)
+
+  /** 变量作用域：兼容 (type, message_id) 与 ({ type, message_id }) 两种写法 */
+  const varScopeOf = (options?: { type?: 'message' | 'chat' | 'global'; message_id?: number } | string): {
+    type: 'message' | 'chat' | 'global'
+    message_id?: number
+  } => {
+    if (typeof options === 'string') return { type: options as 'message' | 'chat' | 'global' }
+    const type = options?.type ?? 'message'
+    const id = Number(options?.message_id)
+    return { type, message_id: Number.isFinite(id) ? id : undefined }
+  }
+  const writeVars = async (variables: Record<string, unknown>, scope: { type: string; message_id?: number }) => {
+    const state = thState()
+    if (scope.type === 'chat') {
+      if (state.currentId) await state.setSessionVariables(state.currentId, variables)
+      return
+    }
+    if (scope.type === 'global') return
+    const flat = resolveMessageIds(flatMessages(), scope.message_id ?? -1)
+    const target = flat[0]
+    if (!target || target.role !== 'assistant') return
+    await updateMessageVariables(target.turnId, variables)
+  }
+  w.replaceVariables = async (
+    variables: Record<string, unknown>,
+    options?: { type?: 'message' | 'chat' | 'global'; message_id?: number } | string
+  ) => {
+    const scope = varScopeOf(options)
+    await writeVars(variables ?? {}, scope)
+    fireThEvent('VARIABLE_UPDATE_ENDED', { vars: variables ?? {} })
+    return variables
+  }
+  w.updateVariablesWith = async (
+    updater: (vars: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
+    options?: { type?: 'message' | 'chat' | 'global'; message_id?: number } | string
+  ) => {
+    const scope = varScopeOf(options)
+    const current = thGetVariables({ type: scope.type, message_id: scope.message_id }) ?? {}
+    const next = await updater(current)
+    await writeVars(next ?? current, scope)
+    fireThEvent('VARIABLE_UPDATE_ENDED', { vars: next ?? current })
+    return next
+  }
   w.getWorldbook = async (name: string) => {
     const doc = mountedDocs.find((d) => d.name === name) ?? mountedDocs[0]
     if (!doc) throw new Error('会话没有挂载角色卡')
@@ -594,9 +728,11 @@ function defineThCompat(w: Record<string, unknown>): void {
   if (typeof w.TavernHelper === 'undefined') {
     const api = [
       'eventOn', 'eventOnce', 'eventEmit', 'eventRemove', 'getButtonEvent',
+      'injectPrompts', 'uninjectPrompts',
       'getChatMessages', 'createChatMessages', 'updateChatMessagesWith', 'deleteChatMessages',
       'triggerSlash', 'generate',
       'getvar', 'setvar', 'getChatVariables', 'setChatVariables', 'getVariables', 'insertOrAssignVariables',
+      'replaceVariables', 'updateVariablesWith',
       'getCharWorldbookNames', 'getWorldbookNames', 'getWorldbook', 'updateWorldbookWith',
       'substitudeMacros', 'getIframeName', 'getCurrentMessageId', 'getMaxContextSize', 'saveChat',
       'waitGlobalInitialized', 'errorCatched',
