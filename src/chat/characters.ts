@@ -2,6 +2,8 @@ import { gunzipSync, unzlibSync } from 'fflate'
 
 export interface WorldEntry {
   id: string
+  /** 条目名（ST 的 comment），脚本按它定位条目；老数据没有 */
+  comment?: string
   /** 触发关键词，命中任意一个就注入 */
   keys: string[]
   content: string
@@ -21,8 +23,69 @@ export interface WorldEntry {
   matchWholeWords?: boolean
   /** 插入顺序，越小越靠前；同分时用它兜底 */
   order?: number
+  /** ST 条目位置：before_char/after_char/an_top/an_bottom/at_depth（@D 深度注入） */
+  position?: string
+  /** @D 深度注入的深度：距末尾消息的距离，0=贴着最后一条 */
+  depth?: number
   /** 用户锁住这条，设定发展模式里的 AI 不会改动它 */
   locked?: boolean
+}
+
+/**
+ * 卡内正则脚本（ST 的 extensions.regex_scripts）。
+ * 这是面板卡的命脉：模型按卡协议输出 <UpdateVariable> 这类标记，
+ * 卡作者用脚本决定它们在提示词里怎么清理、在界面上怎么替换。
+ */
+export interface CardRegexScript {
+  /** 脚本名，排查用 */
+  name: string
+  /** 已剥掉 /…/flags 包装的 pattern 本体（内部转义如 \/ 原样保留） */
+  find: string
+  /** RegExp 标志，缺省补 g */
+  flags: string
+  /** 替换串，支持 $1 捕获组与卡宏（{{char}}/{{user}} 等） */
+  replace: string
+  /** 作用位置：1=用户输入，2=AI 输出；其余值忽略 */
+  placement: number[]
+  /** 只影响显示（不进提示词） */
+  markdownOnly?: boolean
+  /** 只进提示词（不影响显示） */
+  promptOnly?: boolean
+  /** 距末尾消息的距离边界：0=最后一条，闭区间；不设则全程生效 */
+  minDepth?: number
+  maxDepth?: number
+}
+
+/**
+ * 卡内快捷回复按钮（ST 的 extensions.quick_replies）。
+ * 点击后把 message 经宏展开发出去；/ 开头的是 STscript，走子集执行器。
+ */
+export interface CardQuickReply {
+  /** 按钮文案；label 缺省时用 title */
+  label: string
+  message: string
+  /** isVisible=false 的按钮不渲染 */
+  hidden?: boolean
+}
+
+/**
+ * 卡自带的酒馆助手脚本（ext.tavern_helper.scripts）。
+ * 只收全局脚本（type=script 且启用），注入主窗口按卡的原样运行——
+ * 这是"完全兼容酒馆生态"的核心：卡的逻辑不动，我们提供宿主环境。
+ */
+export interface CardHelperScript {
+  /** 脚本名（开场面板 / 状态栏渲染 / 变量结构…） */
+  name: string
+  content: string
+  /** 全局唯一，避免重复注入 */
+  id: string
+}
+
+/** 卡级深度注入（ext.depth_prompt）：prompt 按深度插进对话历史 */
+export interface CardDepthPrompt {
+  prompt: string
+  depth: number
+  role?: string
 }
 
 export interface CharacterCard {
@@ -50,6 +113,12 @@ export interface CharacterCard {
   version?: string
   avatar?: string
   worldInfo: WorldEntry[]
+  regexScripts: CardRegexScript[]
+  quickReplies: CardQuickReply[]
+  /** 酒馆助手全局脚本（ext.tavern_helper.scripts 的 type=script 且启用项） */
+  helperScripts: CardHelperScript[]
+  /** 卡级深度注入（ext.depth_prompt） */
+  depthPrompt?: CardDepthPrompt
   createdAt: number
 }
 
@@ -63,6 +132,9 @@ export const emptyCard = (): CharacterCard => ({
   exampleDialogue: '',
   greetings: [],
   worldInfo: [],
+  regexScripts: [],
+  quickReplies: [],
+  helperScripts: [],
   createdAt: Date.now(),
 })
 
@@ -91,9 +163,11 @@ function parseWorldInfo(raw: unknown): WorldEntry[] {
     const secondaryKeys = (Array.isArray(secondaryRaw) ? secondaryRaw : String(secondaryRaw).split(','))
       .map((k) => String(k).trim())
       .filter(Boolean)
+    const position = parsePosition(entry.position)
 
     out.push({
       id: crypto.randomUUID(),
+      ...(str(entry.comment) ? { comment: str(entry.comment) } : {}),
       keys,
       content,
       enabled: entry.enabled !== false && entry.disable !== true,
@@ -104,7 +178,104 @@ function parseWorldInfo(raw: unknown): WorldEntry[] {
       ...(entry.case_sensitive === true ? { caseSensitive: true } : {}),
       ...(entry.match_whole_words === true ? { matchWholeWords: true } : {}),
       ...(typeof entry.insertion_order === 'number' ? { order: entry.insertion_order } : {}),
+      ...(position ? { position } : {}),
+      ...(typeof entry.depth === 'number' ? { depth: entry.depth } : {}),
     })
+  }
+  return out
+}
+
+/**
+ * ST 的 findRegex 是 "/pattern/flags" 或裸 pattern。
+ * 斜杠包装的剥壳取标志（没写 g 就补上，与 ST 的全局替换语义一致）；
+ * pattern 本体保持原样——内部的 \/ 等转义交给 RegExp 构造，本来就是合法的。
+ */
+function parseFindRegex(raw: string): { find: string; flags: string } {
+  const wrapped = /^\/([\s\S]+)\/([a-z]*)$/.exec(raw.trim())
+  if (wrapped) {
+    const flags = wrapped[2].includes('g') ? wrapped[2] : `${wrapped[2]}g`
+    return { find: wrapped[1], flags }
+  }
+  return { find: raw, flags: 'g' }
+}
+
+/** 跳过停用脚本与缺 findRegex 的残条；placement 容错成整数数组 */
+function parseRegexScripts(raw: unknown): CardRegexScript[] {
+  if (!Array.isArray(raw)) return []
+  const out: CardRegexScript[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const script = item as Raw
+    const findRegex = str(script.findRegex)
+    if (!findRegex || script.disabled === true) continue
+    const { find, flags } = parseFindRegex(findRegex)
+    const placement = (Array.isArray(script.placement) ? script.placement : [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value))
+    out.push({
+      name: str(script.scriptName) || '(未命名)',
+      find,
+      flags,
+      replace: str(script.replaceString),
+      placement,
+      ...(script.markdownOnly === true ? { markdownOnly: true } : {}),
+      ...(script.promptOnly === true ? { promptOnly: true } : {}),
+      ...(typeof script.minDepth === 'number' ? { minDepth: script.minDepth } : {}),
+      ...(typeof script.maxDepth === 'number' ? { maxDepth: script.maxDepth } : {}),
+    })
+  }
+  return out
+}
+
+/** 卡内 QR：message 可以是字符串或分段数组；停用与无内容的一律跳过 */
+function parseQuickReplies(raw: unknown): CardQuickReply[] {
+  if (!Array.isArray(raw)) return []
+  const out: CardQuickReply[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const qr = item as Raw
+    if (qr.isEnabled === false) continue
+    const message = Array.isArray(qr.message)
+      ? qr.message.map((part) => str(part)).filter(Boolean).join('\n')
+      : str(qr.message)
+    if (!message) continue
+    out.push({
+      label: str(qr.label) || str(qr.title) || '(按钮)',
+      message,
+      ...(qr.isVisible === false ? { hidden: true } : {}),
+    })
+  }
+  return out
+}
+
+/** 酒馆助手全局脚本：只收 type=script 且启用的；content 为空跳过 */
+/** 卡级深度注入：prompt 必填、depth 缺省 4、role 只认 system/user */
+function parseDepthPrompt(raw: unknown): CardDepthPrompt | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const d = raw as Raw
+  const prompt = str(d.prompt)
+  if (!prompt) return undefined
+  return {
+    prompt,
+    depth: typeof d.depth === 'number' ? d.depth : 4,
+    ...(str(d.role) ? { role: str(d.role) } : {}),
+  }
+}
+
+/** 酒馆助手全局脚本：只收 type=script 且启用的；content 为空跳过 */
+function parseHelperScripts(raw: unknown): CardHelperScript[] {
+  if (!raw || typeof raw !== 'object') return []
+  const list = Array.isArray(raw) ? raw : ((raw as Raw).scripts as unknown)
+  if (!Array.isArray(list)) return []
+  const out: CardHelperScript[] = []
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue
+    const s = item as Raw
+    if (s.enabled === false) continue
+    if (str(s.type) && str(s.type) !== 'script') continue
+    const content = str(s.content)
+    if (!content) continue
+    out.push({ name: str(s.name) || '(未命名脚本)', content, id: str(s.id) || crypto.randomUUID() })
   }
   return out
 }
@@ -143,12 +314,24 @@ function pickNotes(raw: unknown): string {
   return ''
 }
 
+/** ST 的 position 字段：V2 用数字 0-4，V3/导出用字符串；统一成字符串 */
+const POSITION_NAMES = ['before_char', 'after_char', 'an_top', 'an_bottom', 'at_depth'] as const
+
+function parsePosition(raw: unknown): string | undefined {
+  if (typeof raw === 'string' && raw.trim()) return raw.trim().toLowerCase()
+  if (typeof raw === 'number' && Number.isInteger(raw)) {
+    return POSITION_NAMES[raw] ?? (raw >= 4 ? 'at_depth' : undefined)
+  }
+  return undefined
+}
+
 /** 兼容 chara_card_v2 / chara_card_v3 / 旧版扁平结构 */
 export function normalizeCard(payload: unknown): CharacterCard {
   const root = (payload ?? {}) as Raw
   const data = (root.spec ? root.data : root) as Raw | undefined
   const d = (data ?? root) as Raw
   const tags = Array.isArray(d.tags) ? d.tags.map((tag) => str(tag).trim()).filter(Boolean) : []
+  const ext = (d.extensions ?? {}) as Raw
 
   const card: CharacterCard = {
     id: crypto.randomUUID(),
@@ -168,6 +351,10 @@ export function normalizeCard(payload: unknown): CharacterCard {
     version: str(d.character_version) || undefined,
     createdAt: Date.now(),
     worldInfo: parseWorldInfo(d.character_book),
+    regexScripts: parseRegexScripts(ext.regex_scripts),
+    quickReplies: parseQuickReplies(ext.quick_replies),
+    helperScripts: parseHelperScripts(ext.tavern_helper),
+    depthPrompt: parseDepthPrompt(ext.depth_prompt),
   }
   return card
 }
@@ -372,13 +559,72 @@ export function extractCardFromPng(buffer: ArrayBuffer): unknown | null {
 
 /* ---------------- 宏替换与提示词渲染 ---------------- */
 
+/**
+ * 卡宏的参数允许嵌一层简单宏（如 {{random:{{char}}笑,{{user}}哭}}）：
+ * char/user 先替换，嵌进来的内层已经被展开，这里只负责外层的选项切分。
+ */
+const MACRO_ARG = '[^}]*(?:\\{\\{[^}]*\\}\\}[^}]*)*'
+const RANDOM_RE = new RegExp(`\\{\\{random:(${MACRO_ARG})\\}\\}`, 'gi')
+const PICK_RE = new RegExp(`\\{\\{pick:(${MACRO_ARG})\\}\\}`, 'gi')
+const ROLL_RE = new RegExp(`\\{\\{roll:(${MACRO_ARG})\\}\\}`, 'gi')
+const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+
+const macroOptions = (raw: string): string[] =>
+  raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+/** FNV-1a：{{pick}} 用它做确定性抽取——同一段文本里的 pick 每次求值结果一致 */
+const hashText = (text: string): number => {
+  let hash = 2166136261
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+/** {{roll:1d6+2}} / {{roll:d20}}；骰面不认识时原样保留 */
+function rollDice(spec: string, raw: string): string {
+  const match = /^(\d*)\s*d\s*(\d+)([+-]\d+)?$/i.exec(spec.trim())
+  if (!match) return raw
+  const count = Math.min(Math.max(Number.parseInt(match[1] || '1', 10), 1), 100)
+  const sides = Math.min(Math.max(Number.parseInt(match[2], 10), 2), 10000)
+  const modifier = match[3] ? Number.parseInt(match[3], 10) : 0
+  let total = modifier
+  for (let i = 0; i < count; i++) total += 1 + Math.floor(Math.random() * sides)
+  return String(total)
+}
+
 export function applyMacros(text: string, charName: string, userName: string): string {
   if (!text) return ''
-  return text
+  let out = text
     .replace(/\{\{char\}\}/gi, charName)
     .replace(/\{\{user\}\}/gi, userName)
     .replace(/<BOT>/gi, charName)
     .replace(/<USER>/gi, userName)
+  // {{pick}} 要求「同一段文本里稳定」：对替换后的全文加匹配位置取哈希，
+  // 同一处每次求值结果一致，不同位置各选各的
+  out = out.replace(PICK_RE, (_match, args: string, offset: number) => {
+    const options = macroOptions(args)
+    if (options.length === 0) return ''
+    return options[hashText(`${out}\u0000${offset}`) % options.length]
+  })
+  out = out.replace(RANDOM_RE, (_match, args: string) => {
+    const options = macroOptions(args)
+    return options.length === 0 ? '' : options[Math.floor(Math.random() * options.length)]
+  })
+  out = out.replace(ROLL_RE, (match, args: string) => rollDice(args, match))
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  out = out
+    .replace(/\{\{date\}\}/gi, `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`)
+    .replace(/\{\{time\}\}/gi, `${pad(now.getHours())}:${pad(now.getMinutes())}`)
+    .replace(/\{\{weekday\}\}/gi, WEEKDAYS[now.getDay()])
+    .replace(/\{\{year\}\}/gi, String(now.getFullYear()))
+    .replace(/\{\{month\}\}/gi, String(now.getMonth() + 1))
+  return out
 }
 
 /** 把角色卡渲染成注入 system prompt 的文本块 */

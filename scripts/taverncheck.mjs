@@ -66,7 +66,15 @@ st().saveConfig({
 })
 
 /* ---------------- 1. 导入 ---------------- */
-const raw = JSON.parse(fs.readFileSync(cardPath, 'utf8'))
+// PNG 内嵌卡（tEXt/zTXt/iTXt）与 JSON 卡都认，和 cardcase 同一条解析路
+const { extractCardFromPng, isPngBuffer } = await import('@/chat/characters')
+const buffer = fs.readFileSync(cardPath)
+const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+const raw = isPngBuffer(arrayBuffer) ? extractCardFromPng(arrayBuffer) : JSON.parse(buffer.toString('utf8'))
+if (!raw) {
+  console.log('FAIL 这个文件里没有认得出角色卡的数据')
+  process.exit(1)
+}
 const card = normalizeCard(raw)
 const doc = settingFromCard(card)
 st().importSetting(doc)

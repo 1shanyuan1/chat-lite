@@ -1,6 +1,7 @@
 import type { Usage } from '@/chat/tokens'
 import type { Attachment } from '@/chat/attachments'
 import type { WebSource } from '@/chat/web-search-types'
+import type { GroupConfig } from '@/chat/group'
 
 export type Role = 'user' | 'assistant'
 
@@ -22,6 +23,10 @@ export interface Session {
   titleLocked?: boolean
   /** 压缩续接时写下的前情摘要；界面上可以展开看，也拼进了 systemPrompt */
   recap?: string
+  /** 卡变量树（P3）：模型在回复里用 <UpdateVariable> 报状态变化，这里存应用后的结果 */
+  variables?: Record<string, unknown>
+  /** 酒馆式群聊配置；没有表示单聊（老会话挂多张卡时按默认群聊处理） */
+  group?: GroupConfig
 }
 
 export interface TurnUser {
@@ -44,6 +49,10 @@ export interface TurnAssistant {
   interrupted?: boolean
   /** 这一轮注入的世界书条目（截断后的开头），用来核对设定有没有生效 */
   worldEntries?: string[]
+  /** 消息级变量（酒馆生态）：这条回复的 <UpdateVariable> 应用后的变量树快照 */
+  variables?: Record<string, unknown>
+  /** 群聊发言者：这条回复属于哪个角色（从回复的「**名字**：」或用户 @点名 提取） */
+  speaker?: string
   /** 这一轮里执行过的工具调用（目前只有 web_search） */
   toolCalls?: ToolCallRecord[]
   /** 上游自带搜索返回的来源；native 模式用 */
@@ -119,6 +128,8 @@ export interface Repo {
   setSessionPack(id: string, packId: string): Promise<void>
   /** 补挂设定：会话已经建好、但还没说话时用（起始页勾卡后直接发送） */
   setSessionSettings(id: string, settingIds: string[]): Promise<void>
+  setSessionVariables(id: string, variables: Record<string, unknown>): Promise<void>
+  setSessionGroup(id: string, group?: GroupConfig): Promise<void>
   setSessionPrompt(id: string, promptId?: string): Promise<void>
   deleteSession(id: string): Promise<void>
   listTurns(sessionId: string): Promise<ChatTurn[]>
@@ -142,6 +153,29 @@ export function parseIds(raw: unknown): string[] {
     return Array.isArray(list) ? list.map(String) : []
   } catch {
     return []
+  }
+}
+
+/** 卡变量树存成 JSON 文本，兼容空值；必须是普通对象才收，坏数据静默丢弃 */
+export function parseVariables(raw: unknown): { variables?: Record<string, unknown> } {
+  if (raw == null) return {}
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? { variables: parsed as Record<string, unknown> }
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function parseGroup(raw: unknown): { group?: GroupConfig } {
+  if (raw == null) return {}
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? { group: parsed as GroupConfig } : {}
+  } catch {
+    return {}
   }
 }
 
@@ -217,6 +251,18 @@ export function createLocalRepo(): Repo {
       writeJson(
         SESSIONS,
         readJson<Session[]>(SESSIONS, []).map((s) => (s.id === id ? { ...s, settingIds } : s))
+      )
+    },
+    async setSessionVariables(id, variables) {
+      writeJson(
+        SESSIONS,
+        readJson<Session[]>(SESSIONS, []).map((s) => (s.id === id ? { ...s, variables } : s))
+      )
+    },
+    async setSessionGroup(id, group) {
+      writeJson(
+        SESSIONS,
+        readJson<Session[]>(SESSIONS, []).map((s) => (s.id === id ? { ...s, group } : s))
       )
     },
     async renameSession(id, title, lock) {
@@ -322,7 +368,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   setting_ids TEXT,
   prompt_id TEXT,
   recap TEXT,
-  title_locked INTEGER
+  title_locked INTEGER,
+  variables TEXT,
+  group_config TEXT
 );
 CREATE TABLE IF NOT EXISTS turns (
   id TEXT PRIMARY KEY NOT NULL,
@@ -360,6 +408,8 @@ export async function createSqliteRepo(): Promise<Repo> {
   await db.execute('ALTER TABLE sessions ADD COLUMN prompt_id TEXT').catch(() => undefined)
   await db.execute('ALTER TABLE sessions ADD COLUMN recap TEXT').catch(() => undefined)
   await db.execute('ALTER TABLE sessions ADD COLUMN title_locked INTEGER').catch(() => undefined)
+  await db.execute('ALTER TABLE sessions ADD COLUMN variables TEXT').catch(() => undefined)
+  await db.execute('ALTER TABLE sessions ADD COLUMN group_config TEXT').catch(() => undefined)
 
   const rowToTurn = (row: Record<string, unknown>): ChatTurn => ({
     id: String(row.id),
@@ -373,7 +423,7 @@ export async function createSqliteRepo(): Promise<Repo> {
   return {
     async listSessions() {
       const res = await db.query(
-        'SELECT id, title, updated_at, system_prompt, pack_id, character_id, setting_ids, prompt_id, recap, title_locked FROM sessions ORDER BY updated_at DESC'
+        'SELECT id, title, updated_at, system_prompt, pack_id, character_id, setting_ids, prompt_id, recap, title_locked, variables, group_config FROM sessions ORDER BY updated_at DESC'
       )
       return (res.values ?? []).map((row: Record<string, unknown>) => ({
         id: String(row.id),
@@ -386,6 +436,8 @@ export async function createSqliteRepo(): Promise<Repo> {
         promptId: row.prompt_id == null ? undefined : String(row.prompt_id),
         recap: row.recap == null ? undefined : String(row.recap),
         ...(Number(row.title_locked) === 1 ? { titleLocked: true } : {}),
+        ...parseVariables(row.variables),
+        ...parseGroup(row.group_config),
       }))
     },
     async createSession(title, systemPrompt, packId, settingIds, promptId, recap) {
@@ -413,6 +465,20 @@ export async function createSqliteRepo(): Promise<Repo> {
     async setSessionSettings(id, settingIds) {
       await db.run('UPDATE sessions SET setting_ids = ?, updated_at = ? WHERE id = ?', [
         JSON.stringify(settingIds.length > 0 ? settingIds : []),
+        Date.now(),
+        id,
+      ])
+    },
+    async setSessionVariables(id, variables) {
+      await db.run('UPDATE sessions SET variables = ?, updated_at = ? WHERE id = ?', [
+        JSON.stringify(variables ?? {}),
+        Date.now(),
+        id,
+      ])
+    },
+    async setSessionGroup(id, group) {
+      await db.run('UPDATE sessions SET group_config = ?, updated_at = ? WHERE id = ?', [
+        group ? JSON.stringify(group) : null,
         Date.now(),
         id,
       ])

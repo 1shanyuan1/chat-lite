@@ -8,6 +8,18 @@ import { useImportFiles } from './useImportFiles'
 /** 起始页默认只铺 4 段开场，卡片多的角色卡动辄十几段，全展开会把列表顶飞 */
 const GREETING_PREVIEW = 4
 
+const GROUP_STRATEGIES = [
+  { id: 'natural', label: '自然', hint: '点名 + 话痨度' },
+  { id: 'list', label: '列表', hint: '全员依次' },
+  { id: 'pooled', label: '轮流', hint: '随机未发言' },
+  { id: 'manual', label: '手动', hint: '点谁谁说' },
+] as const
+
+const GROUP_GENERATIONS = [
+  { id: 'swap', label: '交换卡', hint: '只给发言者' },
+  { id: 'join', label: '合并卡', hint: '全员都给' },
+] as const
+
 /**
  * 新建对话：先选极简/写作/酒馆，再勾设定；酒馆再选一段开场白。
  *
@@ -29,6 +41,10 @@ export default function ModePicker() {
     removeSetting,
     pendingGreetingIndex,
     setPendingGreeting,
+    pendingGroupMode,
+    setPendingGroupMode,
+    pendingGroup,
+    updatePendingGroup,
   } = useApp()
   const pack = findPack(config.packId)
   // 写作模式导进来的纯文本是设定；酒馆里的 .txt 仍然当提示词
@@ -102,6 +118,109 @@ export default function ModePicker() {
           )
         })}
       </div>
+
+      {/* 酒馆子模式：单聊 = 一个角色；群聊 = 酒馆式多角色同场 */}
+      {isTavern && (
+        <div className="mt-3">
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-neutral-100 p-1">
+            <button
+              className={`rounded-lg py-1.5 text-[12px] ${
+                pendingGroupMode === 'solo' ? 'bg-white font-medium text-neutral-900 shadow-sm' : 'text-neutral-500'
+              }`}
+              onClick={() => setPendingGroupMode('solo')}
+            >
+              单聊
+            </button>
+            <button
+              className={`rounded-lg py-1.5 text-[12px] ${
+                pendingGroupMode === 'group' ? 'bg-white font-medium text-neutral-900 shadow-sm' : 'text-neutral-500'
+              }`}
+              onClick={() => setPendingGroupMode('group')}
+            >
+              群聊 · 多角色
+            </button>
+          </div>
+
+          {pendingGroupMode === 'group' && (
+            <div className="mt-2 space-y-2.5 rounded-xl border border-neutral-200 px-3 py-2.5">
+              <div>
+                <div className="mb-1 text-[10px] text-neutral-400">发言顺序（酒馆策略）</div>
+                <div className="grid grid-cols-4 gap-1">
+                  {GROUP_STRATEGIES.map((item) => (
+                    <button
+                      key={item.id}
+                      className={`rounded-lg border px-1 py-1 text-[11px] ${
+                        pendingGroup.strategy === item.id
+                          ? 'border-neutral-900 bg-neutral-900 text-white'
+                          : 'border-neutral-200 text-neutral-600'
+                      }`}
+                      onClick={() => updatePendingGroup({ strategy: item.id })}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-[10px] leading-tight text-neutral-400">
+                  {GROUP_STRATEGIES.find((item) => item.id === pendingGroup.strategy)?.hint}
+                </p>
+              </div>
+
+              <div>
+                <div className="mb-1 text-[10px] text-neutral-400">角色卡注入</div>
+                <div className="grid grid-cols-2 gap-1">
+                  {GROUP_GENERATIONS.map((item) => (
+                    <button
+                      key={item.id}
+                      className={`rounded-lg border px-1 py-1 text-[11px] ${
+                        pendingGroup.generation === item.id
+                          ? 'border-neutral-900 bg-neutral-50 text-neutral-900'
+                          : 'border-neutral-200 text-neutral-600'
+                      }`}
+                      onClick={() => updatePendingGroup({ generation: item.id })}
+                    >
+                      {item.label}
+                      <span className="ml-1 text-[9px] text-neutral-400">{item.hint}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] text-neutral-700">自动接话</span>
+                <button
+                  className={`shrink-0 rounded-full px-3 py-1 text-[11px] ${
+                    pendingGroup.autoMode ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                  }`}
+                  onClick={() => updatePendingGroup({ autoMode: !pendingGroup.autoMode })}
+                >
+                  {pendingGroup.autoMode ? '已开启' : '已关闭'}
+                </button>
+              </div>
+
+              {pendingGroup.strategy === 'natural' && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] text-neutral-700">允许连续接话</span>
+                  <button
+                    className={`shrink-0 rounded-full px-3 py-1 text-[11px] ${
+                      pendingGroup.allowSelfResponses ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                    }`}
+                    onClick={() => updatePendingGroup({ allowSelfResponses: !pendingGroup.allowSelfResponses })}
+                  >
+                    {pendingGroup.allowSelfResponses ? '已开启' : '已关闭'}
+                  </button>
+                </div>
+              )}
+
+              <p className="text-[10px] leading-relaxed text-neutral-400">
+                勾选 ≥2 张角色卡开始。开场白每个角色各一条，回复按策略逐个独立生成；群设置可在会话内随时调整。
+              </p>
+              {pickedDocs.filter((d) => d.kind === 'character').length < 2 && (
+                <p className="text-[10px] leading-relaxed text-amber-600">群聊至少需要 2 张角色卡。</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 模式开关直接放起始页：长记忆归极简，设定发展归写作，省得去设置里翻 */}
       {isMinimal && (
@@ -263,7 +382,7 @@ export default function ModePicker() {
                 </div>
               ) : (
                 <p className="rounded-xl bg-neutral-50 px-3 py-2 text-[10px] leading-relaxed text-neutral-500">
-                  {greetingDocs.map((d) => d.name).join('、')} 同场，各自用自己的第一段开场。
+                  {greetingDocs.map((d) => d.name).join('、')} 同场，各自随机一段开场；回复按策略逐个生成。
                 </p>
               )}
 

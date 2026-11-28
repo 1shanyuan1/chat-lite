@@ -1,6 +1,4 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type { ChatConfig } from '@/chat/client'
 import { humanizeError } from '@/chat/errors'
 import { platform } from '@/platform'
@@ -35,6 +33,11 @@ import GreetingPickerNext from './GreetingPickerNext'
 import PalettePicker from '@/ui/PalettePicker'
 import { applyPalette, normalizePalette } from '@/ui/palette'
 import { greetingList, greetingScript, type SettingDoc } from '@/chat/settings'
+import Markdown from '@/ui/Markdown'
+import QuickReplies from '@/ui/QuickReplies'
+import GroupSpeakers from '@/ui/GroupSpeakers'
+import GroupPanel from '@/ui/GroupPanel'
+import { mountThRuntime } from '@/chat/th-runtime'
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -306,26 +309,6 @@ function formatDuration(ms: number): string {
   return `${min} 分 ${Math.round(sec - min * 60)} 秒`
 }
 
-function Markdown({ content }: { content: string }) {
-  return (
-    <div className="md text-[16px] leading-[1.75]">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          /* 超宽表格在表内横滚，不撑破消息区（与正式版同一修复） */
-          table: ({ node, ...props }) => (
-            <div className="overflow-x-auto">
-              <table {...props} />
-            </div>
-          ),
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
-  )
-}
-
 /** 工具名 → 人话 */
 const TOOL_LABEL: Record<string, string> = {
   web_search: '搜索',
@@ -538,6 +521,11 @@ function AnswerMeta({
     <div className="mt-1.5">
       {/* 元信息行：辅助层，一行说完，超出折叠 */}
       <div className="flex items-center gap-x-2 gap-y-1 overflow-hidden text-[12px] text-neutral-500">
+        {assistant.speaker && (
+          <span className="shrink-0 rounded bg-neutral-800 px-2 py-0.5 text-[11px] font-medium text-white">
+            {assistant.speaker}
+          </span>
+        )}
         <span className="min-w-0 truncate">{assistant.model}</span>
         {assistant.reasoningSupported && <span className="shrink-0">思考·{levelLabel}</span>}
         {chars > 0 && <span className="shrink-0 tabular-nums">{chars.toLocaleString('zh-CN')} 字</span>}
@@ -1639,6 +1627,9 @@ function Composer({ meter, opening }: { meter?: React.ReactNode; opening?: strin
         </p>
       )}
 
+      <GroupSpeakers />
+      <QuickReplies />
+
       <div className="flex items-end gap-2 rounded-2xl bg-neutral-100 px-2.5 py-1.5">
         <button
           className="mb-1 shrink-0 rounded-full p-2 text-neutral-600 active:bg-neutral-200 disabled:opacity-40"
@@ -1738,6 +1729,7 @@ export default function AppNext() {
     const ids = session?.settingIds?.length ? session.settingIds : session?.characterId ? [session.characterId] : []
     return ids.map((id) => settings.find((d) => d.id === id)).filter((d): d is SettingDoc => Boolean(d))
   }, [session, settings])
+  const userName = config.userName ?? '你'
   const greetings = useMemo(() => greetingList(sessionDocs, config.userName ?? '你'), [sessionDocs, config.userName])
   const evolutionMode =
     Boolean(config.settingEvolution) && activePackId === 'writing' && sessionDocs.some((doc) => Boolean(doc.derivedFrom))
@@ -1748,6 +1740,13 @@ export default function AppNext() {
         .filter((d): d is SettingDoc => Boolean(d)),
     [pendingSettingIds, settings]
   )
+  // 酒馆助手运行时：挂了带全局脚本的卡时启用（含起始页预挂的卡——开场面板要能在发第一条前交互）
+  useEffect(() => {
+    const docs = sessionDocs.some((d) => (d.helperScripts?.length ?? 0) > 0) ? sessionDocs : pendingDocs
+    if (docs.some((d) => (d.helperScripts?.length ?? 0) > 0)) {
+      mountThRuntime(docs)
+    }
+  }, [sessionDocs, pendingDocs])
   const openingText = turns.length === 0 ? greetingScript(pendingDocs, config.userName ?? '你', pendingGreetingIndex) : ''
   const openingName = pendingDocs.find((d) => d.firstMessage?.trim() || (d.greetings?.length ?? 0) > 0)?.name ?? ''
   const firstTurn = turns[0]
@@ -1907,7 +1906,8 @@ export default function AppNext() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4">
+      <main id="chat" className="flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4">
+
         {session?.recap && (
           <div className="mb-5 rounded-2xl bg-neutral-50 px-4 py-3">
             <button className="flex w-full items-center justify-between text-[12px] text-neutral-500" onClick={() => setRecapOpen((v) => !v)}>
@@ -1925,7 +1925,7 @@ export default function AppNext() {
               <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-neutral-600">开场白</span>
               {openingName && <span className="truncate text-neutral-500">{openingName}</span>}
             </div>
-            <Markdown content={openingText} />
+            <Markdown content={openingText} docs={pendingDocs.length > 0 ? pendingDocs : sessionDocs} userName={userName} />
           </div>
         )}
 
@@ -1944,7 +1944,18 @@ export default function AppNext() {
             ).values()
           )
           return (
-            <div key={turn.id} className="mb-8">
+            <div
+              key={turn.id}
+              className="mb-8 mes"
+              ref={(el) => {
+                // 酒馆生态脚本的 ST DOM 锚点：.mes[mesid][is_user]
+                if (el) {
+                  el.setAttribute('mesid', String(turn.idx))
+                  el.setAttribute('is_user', 'false')
+                }
+              }}
+            >
+
               {userHasContent && (
                 <div className="flex justify-end">
                   <div
@@ -2011,10 +2022,10 @@ export default function AppNext() {
                   bubbleMode ? (
                     /* 气泡模式：助手回复也装进气泡（用户气泡本来就是气泡） */
                     <div className="inline-block max-w-[88%] rounded-2xl rounded-tl-lg bg-neutral-100 px-4 py-3">
-                      <Markdown content={variant.assistant.content} />
+                      <Markdown content={variant.assistant.content} docs={sessionDocs} userName={userName} />
                     </div>
                   ) : (
-                    <Markdown content={variant.assistant.content} />
+                    <Markdown content={variant.assistant.content} docs={sessionDocs} userName={userName} />
                   )
                 ) : null}
 
@@ -2115,6 +2126,7 @@ export default function AppNext() {
       <Composer meter={meter} opening={openingText} />
       <DrawerNext />
       <SettingsSheet />
+      <GroupPanel />
       {treeOpen && (
         <TreeViewNext
           onClose={() => setTreeOpen(false)}

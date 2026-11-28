@@ -1,6 +1,4 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 // 关于页展示的版本号，与 package.json 保持一致
 import packageInfo from '../package.json'
 import type { ChatConfig } from '@/chat/client'
@@ -10,6 +8,11 @@ import { fetchModels, loadCachedModels, type ModelInfo } from '@/chat/models'
 import { resolveProtocol, type ProtocolSetting } from '@/chat/protocol'
 import { labelOf, reasoningEfforts, supportsTemperature } from '@/chat/reasoning'
 import { BUILTIN_PACKS, findPack } from '@/chat/packs'
+import Markdown from '@/ui/Markdown'
+import QuickReplies from '@/ui/QuickReplies'
+import GroupSpeakers from '@/ui/GroupSpeakers'
+import GroupPanel from '@/ui/GroupPanel'
+import { mountThRuntime } from '@/chat/th-runtime'
 import { findProvider, PROVIDER_GROUPS, PROVIDERS, PROVIDER_LABEL_CUSTOM, type Provider } from '@/chat/providers'
 import {
   compressThreshold,
@@ -37,7 +40,8 @@ import ExportSheet from '@/ui/ExportSheet'
 import GreetingPicker from '@/ui/GreetingPicker'
 import PalettePicker from '@/ui/PalettePicker'
 import { applyPalette, normalizePalette } from '@/ui/palette'
-import { greetingList, greetingScript, type SettingDoc } from '@/chat/settings'
+import { greetingList, greetingScript, settingFromCard, type SettingDoc } from '@/chat/settings'
+import { normalizeCard } from '@/chat/characters'
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -288,26 +292,6 @@ function formatDuration(ms: number): string {
   return `${min} 分 ${Math.round(sec - min * 60)} 秒`
 }
 
-function Markdown({ content }: { content: string }) {
-  return (
-    <div className="md text-[16px] leading-[1.75]">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          /* 超宽表格（长英文表头/单元格）在表内横滚，不撑破消息区 */
-          table: ({ node, ...props }) => (
-            <div className="overflow-x-auto">
-              <table {...props} />
-            </div>
-          ),
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
-  )
-}
-
 /** 工具名 → 人话 */
 const TOOL_LABEL: Record<string, string> = {
   web_search: '搜索',
@@ -466,6 +450,11 @@ function UsageLine({ turn }: { turn: ChatTurn }) {
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-neutral-400">
+      {assistant.speaker && (
+        <span className="rounded bg-neutral-800 px-1.5 py-px text-[10px] font-medium text-white">
+          {assistant.speaker}
+        </span>
+      )}
       {assistant.reasoningSupported && (
         <span className="rounded bg-neutral-100 px-1.5 py-px text-[10px] text-neutral-500">思考·{levelLabel}</span>
       )}
@@ -1826,6 +1815,9 @@ function Composer({ meter, opening }: { meter?: React.ReactNode; opening?: strin
         </p>
       )}
 
+      <GroupSpeakers />
+      <QuickReplies />
+
       <div className="flex items-end gap-2 rounded-[22px] bg-neutral-100 px-2.5 py-1.5">
         <button
           className="mb-1 shrink-0 rounded-full p-1.5 text-neutral-500 active:bg-neutral-200 disabled:opacity-40"
@@ -1935,6 +1927,7 @@ export default function App() {
         : []
     return ids.map((id) => settings.find((d) => d.id === id)).filter((d): d is SettingDoc => Boolean(d))
   }, [session, settings])
+  const userName = config.userName ?? '你'
   const greetings = useMemo(
     () => greetingList(sessionDocs, config.userName ?? '你'),
     [sessionDocs, config.userName]
@@ -1955,6 +1948,13 @@ export default function App() {
         .filter((d): d is SettingDoc => Boolean(d)),
     [pendingSettingIds, settings]
   )
+  // 酒馆助手运行时：挂了带全局脚本的卡时启用（含起始页预挂的卡——开场面板要能在发第一条前交互）
+  useEffect(() => {
+    const docs = sessionDocs.some((d) => (d.helperScripts?.length ?? 0) > 0) ? sessionDocs : pendingDocs
+    if (docs.some((d) => (d.helperScripts?.length ?? 0) > 0)) {
+      mountThRuntime(docs)
+    }
+  }, [sessionDocs, pendingDocs])
   const openingText =
     turns.length === 0 ? greetingScript(pendingDocs, config.userName ?? '你', pendingGreetingIndex) : ''
   const openingName =
@@ -2153,7 +2153,8 @@ export default function App() {
       </header>
 
       {/* overflow-x-hidden：消息区只允许纵向滚。断行兜底在 styles.css 的 main 规则里 */}
-      <main className="flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4">
+      <main id="chat" className="flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4">
+
         {session?.recap && (
           <div className="mb-4 rounded-xl bg-neutral-50 px-3 py-2">
             <button
@@ -2179,7 +2180,7 @@ export default function App() {
               <span className="rounded bg-neutral-100 px-1.5 py-px text-neutral-500">开场白</span>
               {openingName && <span className="truncate">{openingName}</span>}
             </div>
-            <Markdown content={openingText} />
+            <Markdown content={openingText} docs={pendingDocs.length > 0 ? pendingDocs : sessionDocs} userName={userName} />
           </div>
         )}
 
@@ -2200,7 +2201,18 @@ export default function App() {
             ).values()
           )
           return (
-            <div key={turn.id} className="mb-6">
+            <div
+              key={turn.id}
+              className="mb-6 mes"
+              ref={(el) => {
+                // 酒馆生态脚本的 ST DOM 锚点：.mes[mesid][is_user]
+                if (el) {
+                  el.setAttribute('mesid', String(turn.idx))
+                  el.setAttribute('is_user', 'false')
+                }
+              }}
+            >
+
               {userHasContent && (
                   <div className="flex justify-end">
                     <div
@@ -2280,10 +2292,10 @@ export default function App() {
                   config.bubbles ? (
                     /* 气泡模式：助手回复也装进气泡（用户气泡本来就是气泡） */
                     <div className="inline-block max-w-[88%] rounded-2xl rounded-tl-lg bg-neutral-100 px-4 py-3">
-                      <Markdown content={variant.assistant.content} />
+                      <Markdown content={variant.assistant.content} docs={sessionDocs} userName={userName} />
                     </div>
                   ) : (
-                    <Markdown content={variant.assistant.content} />
+                    <Markdown content={variant.assistant.content} docs={sessionDocs} userName={userName} />
                   )
                 ) : null}
 
@@ -2396,6 +2408,7 @@ export default function App() {
 
       <Composer meter={meter} opening={openingText} />
       <SessionDrawer />
+      <GroupPanel />
       <SettingsSheet />
       {treeOpen && (
         <TreeView
@@ -2428,3 +2441,26 @@ export default function App() {
     </div>
   )
 }
+
+// 调试桥：外部工具（CDP/自检）直接走真实导入路径灌卡，也方便生态脚本排障
+if (typeof window !== 'undefined') {
+  ;(window as unknown as Record<string, unknown>).__clImport = (raw: unknown) => {
+    useApp.getState().importSetting(settingFromCard(normalizeCard(raw)))
+    return 'imported'
+  }
+  ;(window as unknown as Record<string, unknown>).__clState = () => {
+    const s = useApp.getState()
+    const last = s.turns[s.turns.length - 1]
+    const v = last ? (last.variants[last.active] ?? last.variants[0]) : undefined
+    return {
+      currentId: s.currentId,
+      title: s.sessions.find((x) => x.id === s.currentId)?.title,
+      settingIds: s.sessions.find((x) => x.id === s.currentId)?.settingIds,
+      turns: s.turns.length,
+      lastRole: v?.assistant ? 'assistant' : 'user',
+      lastSpeaker: v?.assistant?.speaker,
+      lastHead: (v?.assistant?.content ?? v?.user?.content ?? '').slice(0, 60),
+    }
+  }
+}
+

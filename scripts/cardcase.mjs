@@ -66,6 +66,8 @@ line('条目', `${doc.entries.length} 条${constant > 0 ? `（${constant} 条常
 line('开场', `${openings} 段`)
 line('正文字数', `${doc.body.length} 字`)
 line('后置指令', doc.postHistory ? `${doc.postHistory.slice(0, 40)}…` : '（无）')
+line('正则脚本', doc.regexScripts?.length ? `${doc.regexScripts.length} 条` : '（无）')
+line('QR 按钮', doc.quickReplies?.length ? `${doc.quickReplies.length} 个` : '（无）')
 line('作者备注', doc.creatorNotes ? `${doc.creatorNotes.slice(0, 60)}${doc.creatorNotes.length > 60 ? '…' : ''}` : '（无）')
 
 console.log('\n' + '='.repeat(60))

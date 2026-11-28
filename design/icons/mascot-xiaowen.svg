@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="286 570 708 454" width="708" height="454">
+  <!-- 吉祥物 · 小问（原 logo 下侧）：空心气泡 + 三个点（省略号）
+       原稿底部为出血贴边（平口），此处镜像补上 100 半径的底角，闭合成完整气泡 -->
+  <path d="M 300,910 Q 300,1010 400,1010 H 880 Q 980,1010 980,910 V 684 Q 980,584 880,584 H 400 Q 300,584 300,684 Z"
+        fill="none" stroke="#111111" stroke-width="28" stroke-linejoin="round"/>
+  <circle cx="470" cy="835" r="56" fill="#111111"/>
+  <circle cx="640" cy="835" r="56" fill="#111111"/>
+  <circle cx="810" cy="835" r="56" fill="#111111"/>
+</svg>

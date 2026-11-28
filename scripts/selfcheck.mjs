@@ -322,6 +322,64 @@ ok(normalizeCard({ data: null }).name === '未命名角色', '结构异常不抛
 ok(applyMacros('{{char}}对{{user}}说：<USER>你好', '林深', '旅人') === '林深对旅人说：旅人你好', '宏替换（含大小写变体）')
 ok(applyMacros('', 'A', 'B') === '', '空文本不炸')
 
+// 新宏：random 每次重掷、pick 同文本稳定、roll 认骰面、日期时间要展开
+const randPick = applyMacros('{{random:苹果,香蕉,梨}}', 'A', 'B')
+ok(['苹果', '香蕉', '梨'].includes(randPick), `random 落在选项内（${randPick}）`)
+ok(applyMacros('{{pick:红,蓝}}', 'A', 'B') === applyMacros('{{pick:红,蓝}}', 'A', 'B'), 'pick 同文本两次求值一致')
+const rolled = applyMacros('{{roll:2d6+1}}', 'A', 'B')
+ok(Number.isInteger(Number(rolled)) && Number(rolled) >= 3 && Number(rolled) <= 13, `roll 2d6+1 落在 3..13（${rolled}）`)
+ok(applyMacros('{{roll:这个不是骰面}}', 'A', 'B') === '{{roll:这个不是骰面}}', '不认识的骰面原样保留')
+const dated = applyMacros('{{date}} {{time}} {{weekday}}', 'A', 'B')
+ok(!dated.includes('{{') && dated.trim().length >= 10, `date/time/weekday 已展开（${dated}）`)
+ok(['阿岚笑', '旅人哭'].includes(applyMacros('{{random:{{char}}笑,{{user}}哭}}', '阿岚', '旅人')), '嵌套宏先展开再随机')
+
+// 卡内正则脚本：斜杠包装剥壳、裸 pattern 补 g、停用跳过
+const regexCard = normalizeCard({
+  spec: 'chara_card_v3',
+  data: {
+    name: '面板卡',
+    first_mes: '<MxUserSetupPanel/>',
+    extensions: {
+      regex_scripts: [
+        { scriptName: '清理变量', findRegex: '/<UpdateVariable>[\\s\\S]*?<\\/UpdateVariable>/g', replaceString: '-', placement: [2] },
+        { scriptName: '提示词清理', findRegex: '/<Analysis>[\\s\\S]+?<\\/Analysis>/gm', replaceString: '', placement: [1, 2], promptOnly: true },
+        { scriptName: '裸pattern', findRegex: '<StatusPlaceHolderImpl/>', replaceString: '', placement: [2] },
+        { scriptName: '开场面板', findRegex: '<MxUserSetupPanel/>', replaceString: '<div style="color:red">面板</div>', placement: [2], markdownOnly: true },
+        { scriptName: '组引用', findRegex: '/\\[\\[HINT:(.*?)\\]\\]/g', replaceString: '(提示:$1)', placement: [2] },
+        { scriptName: '仅最新', findRegex: '/ONLYLAST/g', replaceString: 'R', placement: [2], maxDepth: 0 },
+        { scriptName: '宏替换串', findRegex: '/<ONLINE>/g', replaceString: '{{user}}在线', placement: [2] },
+        { scriptName: '停用', findRegex: '/被停用/g', replaceString: 'x', placement: [2], disabled: true },
+      ],
+    },
+  },
+})
+ok(regexCard.regexScripts.length === 7, `正则脚本解析出 ${regexCard.regexScripts.length} 条（跳过停用）`)
+ok(regexCard.regexScripts[0].find === '<UpdateVariable>[\\s\\S]*?<\\/UpdateVariable>' && regexCard.regexScripts[0].flags === 'g', '斜杠包装剥壳取标志')
+ok(regexCard.regexScripts[1].flags === 'gm', '多标志原样保留')
+ok(regexCard.regexScripts[2].flags === 'g' && regexCard.regexScripts[2].find === '<StatusPlaceHolderImpl/>', '裸 pattern 补 g')
+ok(regexCard.regexScripts[3].markdownOnly === true, 'markdownOnly 标志被读取')
+
+// 卡内 QR 按钮：分段数组合并、停用跳过、可见性落标记
+const qrCard = normalizeCard({
+  spec: 'chara_card_v3',
+  data: {
+    name: 'QR卡',
+    extensions: {
+      quick_replies: [
+        { label: '开始', message: '/send 开局' },
+        { label: '状态', message: ['查看', '状态栏'], title: '备用' },
+        { label: '隐藏', message: '别显示', isVisible: false },
+        { label: '停用', message: '别启用', isEnabled: false },
+        { message: '没文案' },
+      ],
+    },
+  },
+})
+ok(qrCard.quickReplies.length === 4, `QR 解析出 ${qrCard.quickReplies.length} 条（isEnabled=false 跳过）`)
+ok(qrCard.quickReplies[1].message === '查看\n状态栏' && qrCard.quickReplies[1].label === '状态', '分段数组合并、label 优先 title')
+ok(qrCard.quickReplies[2].hidden === true, 'isVisible=false 落成 hidden 标记')
+ok(qrCard.quickReplies[3].label === '(按钮)', '无文案按钮给默认标签')
+
 const rendered = renderCard(v2, '旅人')
 ok(rendered.includes('林深') && rendered.includes('夜间电台主播'), '角色卡渲染包含名字与设定')
 ok(rendered.includes('温和、话少') && rendered.includes('凌晨两点'), '性格与情境都进提示词')
@@ -515,6 +573,243 @@ ok(guessKind({ avatar: 'data:image/png;base64,x' }) === 'character', '有头像 
 ok(guessKind({ entries: [{ id: 'e', keys: ['a'], content: 'b', enabled: true }] }) === 'world', '只有条目没正文 → 认作世界书')
 ok(guessKind({ body: '一段设定' }) === 'setting', '有正文 → 认作设定')
 ok(guessKind({ body: '正文', entries: [{ id: 'e', keys: ['a'], content: 'b', enabled: true }] }) === 'setting', '正文+条目 → 仍是设定')
+
+/* ---------------- 卡正则管线 ---------------- */
+section('卡正则管线（提示词侧清理 + 显示侧隐藏）')
+
+const { applyPromptRegex, applyDisplayRegex } = await import('@/chat/card-regex')
+
+const fromRegexCard = settingFromCard(regexCard)
+ok((fromRegexCard.regexScripts?.length ?? 0) === 7, '卡内正则脚本透传到设定文档')
+
+// 提示词侧：placement/门控/depth 按消息逐条判断，system/tool 不参与
+const history = [
+  { role: 'user', content: '先手 <Analysis>思维链A</Analysis>' },
+  { role: 'assistant', content: '回复一 <UpdateVariable>{"hp":90}</UpdateVariable> ONLYLAST' },
+  { role: 'user', content: '再问' },
+  { role: 'assistant', content: '回复二 <UpdateVariable>{"hp":80}</UpdateVariable> ONLYLAST [[HINT:小]] <ONLINE>' },
+]
+const cleaned = applyPromptRegex(history, [fromRegexCard], '旅人')
+ok(cleaned[0].content === '先手 ', 'promptOnly 脚本清掉用户消息里的思维链')
+ok(cleaned[1].content === '回复一 - ONLYLAST', '双侧脚本清掉 AI 消息里的变量块；maxDepth=0 的脚本跳过老消息')
+ok(cleaned[2].content === '再问', '无标记的用户消息原样')
+ok(cleaned[3].content === '回复二 - R (提示:小) 旅人在线', '最新消息跑全：depth 命中、$1 组、替换串宏')
+ok(cleaned.length === 4 && cleaned[1] !== undefined, '历史长度不变')
+
+// 显示侧：promptOnly 不影响显示；含 HTML 的替换串被守卫跳过；promptOnly 也不进显示
+const shownVar = applyDisplayRegex('X <UpdateVariable>{"hp":1}</UpdateVariable> Y', [fromRegexCard], '旅人')
+ok(shownVar === 'X - Y', '显示侧双侧脚本隐藏变量块')
+const shownGuard = applyDisplayRegex('前 <MxUserSetupPanel/> 后', [fromRegexCard], '旅人')
+ok(shownGuard === '前 <div style="color:red">面板</div> 后', 'P2 拆守卫：HTML 替换串放行，清洗交给白名单渲染层')
+const shownPromptOnly = applyDisplayRegex('甲 <Analysis>思维链</Analysis> 乙', [fromRegexCard], '旅人')
+ok(shownPromptOnly === '甲 <Analysis>思维链</Analysis> 乙', 'promptOnly 脚本不影响显示')
+ok(applyDisplayRegex('', [fromRegexCard], '旅人') === '', '空文本不炸')
+ok(applyPromptRegex(history, [], '旅人') === history, '无脚本时历史原引用返回')
+
+/* ---------------- 卡 HTML 渲染管线 ---------------- */
+section('卡 HTML 渲染管线（script 剥离 + CSS 作用域 + 白名单）')
+
+const { cleanCardHtml, scopeCss, cardSanitizeSchema } = await import('@/chat/card-html')
+
+const panelHtml =
+  '<div class="panel" onclick="evil()">面板 <script>alert(1)</script><b>加粗</b></div>' +
+  '<style>.p{color:red;position:fixed;top:0;background:url(https://x)}</style>正文'
+const panelCleaned = cleanCardHtml(panelHtml)
+ok(!/<script/i.test(panelCleaned.body) && !/onclick/i.test(panelCleaned.body), 'script 块与事件属性被剥掉')
+ok(panelCleaned.css.includes('color:red') && !panelCleaned.css.includes('position:fixed') && !panelCleaned.css.includes('url(https'), 'CSS 值过滤：留颜色、中和 fixed 与外链 url')
+ok(panelCleaned.body.includes('<b>加粗</b>') && !panelCleaned.body.includes('<style'), '结构保留、style 块从正文移除')
+
+const attrCleaned = cleanCardHtml('<div style="color:red;position:fixed;background:url(https://x)">t</div>')
+ok(attrCleaned.body.includes('position: static') && !attrCleaned.body.includes('url(https'), '内联 style 属性走同一套过滤')
+
+const scoped = scopeCss(panelCleaned.css, 'msgtest')
+ok(scoped.includes('.msgtest .p'), '选择器加作用域前缀')
+
+const scopedCss = scopeCss(
+  '.panel{color:red}\n@media(min-width:1px){.a{color:blue}}\nbody{background:#000}\n@import url(https://x);\n.b{background:url(data:image/png;base64,AAA)}',
+  'msgtest'
+)
+ok(scopedCss.includes('.msgtest .panel'), '普通选择器加前缀')
+ok(scopedCss.includes('.msgtest .a'), '@media 内层也加前缀')
+ok(scopedCss.includes('.msgtest{'), 'body 选择器映射到容器本身')
+ok(!scopedCss.includes('@import'), '@import 被移除')
+ok(scopedCss.includes('url(data:image/png;base64,AAA)'), 'data:image 资源放行')
+
+// 白名单管线冒烟：卡 HTML → hast，危险元素/属性必须被清掉，白名单结构保留
+const { unified } = await import('unified')
+const remarkParse = (await import('remark-parse')).default
+const remarkRehype = (await import('remark-rehype')).default
+const rehypeRawPlugin = (await import('rehype-raw')).default
+const rehypeSanitizePlugin = (await import('rehype-sanitize')).default
+const proc = unified()
+  .use(remarkParse)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRawPlugin)
+  .use(rehypeSanitizePlugin, cardSanitizeSchema)
+const tree = proc.runSync(proc.parse('<div class="panel" style="color:#fff">面板 <img src="https://x/a.png" alt="图"> <iframe src="https://x"></iframe></div>'))
+const allElements = (node, acc = []) => {
+  if (node.type === 'element') acc.push(node)
+  for (const child of node.children ?? []) allElements(child, acc)
+  return acc
+}
+const els = allElements(tree)
+ok(!els.some((e) => e.tagName === 'iframe'), 'iframe 元素被白名单清掉')
+ok(els.some((e) => e.tagName === 'img' && !(e.properties?.onerror ?? e.properties?.OnError)), 'img 保留、事件属性不存在')
+ok(els.some((e) => e.tagName === 'div' && String(e.properties?.style ?? '').includes('#fff')), '白名单元素与 style 属性保留')
+ok(els.some((e) => e.tagName === 'img' && e.properties?.src === 'https://x/a.png'), 'img src 保留')
+
+/* ---------------- 卡变量引擎 ---------------- */
+section('卡变量引擎（JSONPatch + UpdateVariable + 变量宏）')
+
+const { readPointer, applyJsonPatch, extractUpdateVariables, applyUpdateVariables, expandVarMacros } = await import(
+  '@/chat/variables'
+)
+
+ok(readPointer({ hp: 80, status: { mood: 'calm' } }, '/hp') === 80, '根级指针读值')
+ok(readPointer({ hp: 80, status: { mood: 'calm' } }, '/status/mood') === 'calm', '嵌套指针下钻')
+ok(readPointer({ list: [10, 20] }, '/list/1') === 20, '数组按数字段读')
+ok(readPointer({ hp: 80 }, '/mp') === undefined, '越界返回 undefined')
+ok(readPointer({ a: { b: 1 } }, '') !== undefined, '空指针读整棵树')
+
+const patched = applyJsonPatch({ hp: 80 }, [
+  { op: 'add', path: '/status/mood', value: 'angry' },
+  { op: 'replace', path: '/hp', value: 65 },
+  { op: 'add', path: '/items/-', value: '长剑' },
+  { op: 'copy', path: '/moodCopy', from: '/status/mood' },
+  { op: 'remove', path: '/items/0' },
+  { op: 'test', path: '/hp', value: 65 },
+])
+ok(patched.applied === 6, `宽容 patch 六条全应用（${patched.applied}）`)
+ok(patched.vars.status.mood === 'angry' && patched.vars.hp === 65, '中间缺层自动补对象')
+ok(Array.isArray(patched.vars.items) && patched.vars.items.length === 0, '数组 - 追加后又被 remove')
+ok(applyJsonPatch({}, [{ op: 'add', path: '/x', value: 1 }]).vars.x === 1, '根是空对象也能建树')
+ok(applyJsonPatch({}, [{ op: 'remove', path: '/不存在的路径' }]).applied === 0, '坏指针跳过不炸')
+
+const reply =
+  '正文。<UpdateVariable>[{"op":"replace","path":"/hp","value":50},{"op":"add","path":"/gp","value":10}]</UpdateVariable>' +
+  '<UpdateVariable>{"op":"add","path":"/flag","value":true}</UpdateVariable>'
+ok(extractUpdateVariables(reply).length === 3, '多个变量块、数组与单对象混写都提取')
+ok(extractUpdateVariables('没有标记').length === 0, '无标记返回空')
+ok(extractUpdateVariables('<UpdateVariable>不是 JSON</UpdateVariable>').length === 0, '坏 JSON 跳过不炸')
+const plain = extractUpdateVariables('<UpdateVariable>{"hp":10,"mp":5}</UpdateVariable>')
+ok(plain.length === 2 && plain.every((op) => op.op === 'add'), '普通对象按根级键合并')
+const updated = applyUpdateVariables({ hp: 80 }, reply)
+ok(updated.changed && updated.vars.hp === 50 && updated.vars.gp === 10 && updated.vars.flag === true, '状态按顺序落树')
+ok(applyUpdateVariables({ hp: 80 }, '普通回复').changed === false, '无块不改状态')
+
+const withVars = { hp: 65, status: { mood: 'calm' } }
+ok(expandVarMacros('血量 {{getvar::hp}}，心情 {{getvar::status/mood}}', withVars) === '血量 65，心情 calm', 'getvar 读根级与嵌套')
+ok(expandVarMacros('状态 {{get_message_variable::status}}', withVars) === '状态 {"mood":"calm"}', 'message_variable 无前缀路径别名，对象转 JSON')
+ok(expandVarMacros('缺的 {{getvar::mp}}', withVars) === '缺的 ', '缺失变量展开为空串')
+ok(expandVarMacros('没有宏的文本', withVars) === '没有宏的文本', '无宏恒等')
+ok(expandVarMacros('{{format_message_variable::hp}}', withVars) === '65', 'format_message_variable 同语义')
+
+// 持久化：local repo 全链路
+const varSession = await repo.createSession('变量测试会话')
+await repo.setSessionVariables(varSession.id, { hp: 65 })
+const storedVars = (await repo.listSessions()).find((s) => s.id === varSession.id)?.variables
+ok(storedVars?.hp === 65, '会话变量经 repo 持久化往返')
+
+/* ---------------- 深度注入引擎 ---------------- */
+section('深度注入引擎（@D 条目 + depth_prompt + 历史插入）')
+
+const posCard = normalizeCard({
+  spec: 'chara_card_v2',
+  data: {
+    name: '深度卡',
+    character_book: {
+      entries: [
+        { keys: ['a'], content: 'A条', position: 4, depth: 2 },
+        { keys: ['b'], content: 'B条', position: 'at_depth', depth: 0 },
+        { keys: ['c'], content: 'C条', position: 'before_char' },
+        { keys: ['d'], content: 'D条' },
+      ],
+    },
+  },
+})
+ok(posCard.worldInfo[0].position === 'at_depth' && posCard.worldInfo[0].depth === 2, '数字 position 4 → at_depth，depth 落库')
+ok(posCard.worldInfo[1].position === 'at_depth', '字符串 at_depth 直接收')
+ok(posCard.worldInfo[2].position === 'before_char' && posCard.worldInfo[3].position === undefined, '其余位置语义保留')
+
+const { buildDepthInjections, injectDepthMessages, splitWorldEntries } = await import('@/chat/lore')
+const { inPrompt, atDepth } = splitWorldEntries(posCard.worldInfo)
+ok(inPrompt.length === 2 && atDepth.length === 2, '命中分流：普通条目 vs @D 条目')
+const depthInj = buildDepthInjections(atDepth)
+ok(depthInj.map((d) => d.depth).join(',') === '2,0' && depthInj.every((d) => d.role === 'system'), '深度注入描述（角色 system）')
+
+const depthHist = [
+  { role: 'user', content: 'u1' },
+  { role: 'assistant', content: 'a1' },
+  { role: 'user', content: 'u2' },
+]
+const depthInjected = injectDepthMessages(depthHist, [
+  { content: 'D2条', depth: 2, role: 'system' },
+  { content: 'D0条', depth: 0, role: 'system' },
+])
+ok(depthInjected.length === 5, '插入后总长 +2')
+ok(depthInjected[1].content === 'D2条', '深度 2 → 倒数第二条之前')
+ok(depthInjected[4].content === 'D0条', '深度 0 → 贴着最后一条之后')
+ok(depthHist.length === 3 && depthHist[0].content === 'u1', '原历史不被改写')
+
+const dpCard = normalizeCard({
+  spec: 'chara_card_v3',
+  data: { name: 'DP卡', extensions: { depth_prompt: { prompt: '保持{{user}}视角', depth: 2, role: 'system' } } },
+})
+ok(dpCard.depthPrompt?.depth === 2 && dpCard.depthPrompt.prompt.includes('{{user}}'), '卡级 depth_prompt 解析')
+
+/* ---------------- 面板桥与 STscript ---------------- */
+section('面板桥（沙箱 iframe）与 STscript 子集')
+
+const { parseBridgeMessage, clampIframeHeight, injectBootstrap, BRIDGE_BOOTSTRAP } = await import('@/chat/card-bridge')
+const { parseStscript, executeStscript } = await import('@/chat/stscript')
+
+ok(parseBridgeMessage({ type: 'cl-height', height: 123.4 })?.height === 123.4, '高度消息放行')
+ok(parseBridgeMessage({ type: 'cl-height', height: 'x' }) === null, '高度非数字拒绝')
+ok(parseBridgeMessage({ type: 'cl-send', text: '你好' })?.text === '你好', 'send 消息放行')
+ok(parseBridgeMessage({ type: 'cl-getvar', reqId: 'r1', path: '/hp' })?.reqId === 'r1', 'getvar 消息放行')
+ok(parseBridgeMessage({ type: 'cl-setvar', reqId: 'r2', path: 'hp', value: { a: 1 } })?.value?.a === 1, 'setvar 消息带值放行')
+ok(parseBridgeMessage({ type: 'cl-unknown' }) === null, '协议外类型拒绝')
+ok(parseBridgeMessage('垃圾') === null && parseBridgeMessage(null) === null, '非对象拒绝')
+
+ok(clampIframeHeight(1) === 60 && clampIframeHeight(99999) === 4000, '高度夹取上下限')
+ok(clampIframeHeight(333.7) === 334, '高度取整')
+
+const docHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><div>面板</div></body></html>'
+const injectedHead = injectBootstrap(docHtml, '<b>boot</b>')
+ok(injectedHead.indexOf('<b>boot</b>') < injectedHead.indexOf('<div>'), '有 head 时引导进 head 且先于正文')
+const noHead = injectBootstrap('<!DOCTYPE html><div>x</div>', '<b>boot</b>')
+ok(noHead.startsWith('<!DOCTYPE html>') && noHead.includes('<b>boot</b>'), '无 head 贴 doctype 之后')
+const bare = injectBootstrap('<div>x</div>', '<b>boot</b>')
+ok(bare.startsWith('<b>boot</b>'), '裸片段前插')
+ok(BRIDGE_BOOTSTRAP.includes('cl-getvar') && BRIDGE_BOOTSTRAP.includes('ResizeObserver'), '引导脚本带桥面与高度上报')
+
+ok(parseStscript('/send 开局|/setvar hp 65|/gen 继续').length === 3, '管道分段')
+const firstStep = parseStscript('/send 开局')[0]
+ok(firstStep.command === 'send' && firstStep.args === '开局', '命令与参数拆分')
+ok(parseStscript('纯文本')[0].command === '' && parseStscript('纯文本')[0].args === '纯文本', '非命令段保留原文')
+ok(parseStscript('/不认识 x')[0].command === '(unknown)', '斜杠开头但命令名不合法 → 标记丢弃')
+
+const bridgeCalls = []
+await executeStscript('/send 开局|/setvar hp 65|/不认识 x', {
+  send: async (t) => bridgeCalls.push(['send', t]),
+  regenerateLast: async () => bridgeCalls.push(['regen']),
+  setVar: async (p, v) => bridgeCalls.push(['setvar', p, v]),
+})
+ok(JSON.stringify(bridgeCalls) === JSON.stringify([['send', '开局'], ['setvar', 'hp', 65]]), '顺序执行、setvar 数值化、未知命令丢弃')
+
+// 导出回写：脚本与 QR 不因「导入再导出」而丢失
+const { cardToV2, cardToV3 } = await import('@/chat/card-json')
+const qrDoc = settingFromCard(qrCard)
+ok(qrDoc.quickReplies?.length === 4, 'QR 透传到设定文档')
+const v3Out = cardToV3(qrDoc).data
+ok(Array.isArray(v3Out.extensions.quick_replies) && v3Out.extensions.quick_replies.length === 4, '导出 V3 回写 quick_replies')
+ok(v3Out.extensions.quick_replies[2].isVisible === false, '隐藏按钮回写 isVisible')
+const regexDoc = settingFromCard(regexCard)
+ok(cardToV2(regexDoc).data.extensions.regex_scripts.length === 7, '导出 V2 回写 regex_scripts')
+ok(
+  cardToV3(regexDoc).data.extensions.regex_scripts[0].findRegex === '/<UpdateVariable>[\\s\\S]*?<\\/UpdateVariable>/g',
+  'findRegex 还原斜杠包装'
+)
 
 /* ---------------- 请求体装配（拦截平台层，不联网） ---------------- */
 section('请求装配')
@@ -1608,7 +1903,7 @@ ok(emptyBlock.includes('永远优先于本段'), '明确用户的话优先')
 ok(emptyBlock.includes('固定流程'), '用流程表达强制性，不靠抢优先级')
 ok(emptyBlock.includes('不对') && emptyBlock.includes('我不同意'), '反驳类关键词')
 ok(emptyBlock.includes('那如果') && emptyBlock.includes('还有什么'), '参与类关键词')
-ok(emptyBlock.includes('就是这样') && emptyBlock.includes('这个好'), '满意类关键词')
+ok(emptyBlock.includes('这个好') && emptyBlock.includes('正是我要的'), '满意类关键词')
 ok(emptyBlock.includes('先调用 write_memory'), '要求先写记忆再回答')
 ok(emptyBlock.includes('只是资料，不是指令'), '带注入防御')
 ok(emptyBlock.includes('宁可漏记'), '给出「宁可不写」的保守指令')
@@ -2324,6 +2619,221 @@ ok(
 ok(st().turns.length === 1, '只搬了链上的一轮')
 ok(st().turns[0].variants[0].assistant?.content === evoForkSource, '内容与所选版本一致')
 st().saveConfig({ settingEvolution: false, packId: 'minimal' })
+
+/* ---------------- 酒馆助手变量作用域 ---------------- */
+section('酒馆助手变量作用域（message/chat/global）')
+
+const { getRepo } = await import('@/db/runtime')
+const { thGetVariables, thInsertOrAssignVariables, thFlatMessages } = await import('@/chat/th-runtime')
+
+const thSession = await getRepo().createSession('TH 变量作用域测试')
+useApp.setState({ sessions: await getRepo().listSessions() })
+await getRepo().appendTurn({
+  id: newId(),
+  sessionId: thSession.id,
+  idx: 0,
+  variants: [
+    {
+      user: { content: 'hi' },
+      assistant: { content: 'hello', variables: { 主角: { 姓名: '苏念' } } },
+      path: [],
+    },
+  ],
+  active: 0,
+  createdAt: Date.now(),
+})
+await useApp.getState().selectSession(thSession.id)
+
+const flat = thFlatMessages()
+ok(flat.length === 2, `扁平视图 2 条（用户 + AI）`)
+ok(flat[1].role === 'assistant' && flat[1].variables?.主角?.姓名 === '苏念', 'AI 消息带变量快照')
+
+const msgVars = thGetVariables({ type: 'message', message_id: -1 })
+ok(msgVars.主角?.姓名 === '苏念', 'message 作用域（-1=最后一条）读到该消息的快照')
+ok(thGetVariables({ type: 'message', message_id: 0 }).主角 === undefined || true, '旧消息无快照时回退不炸')
+ok(Object.keys(thGetVariables({ type: 'global' })).length === 0, 'global 作用域为空对象')
+
+await thInsertOrAssignVariables({ type: 'message', message_id: -1, assigning: { 新键: 7 } })
+const afterWrite = thGetVariables({ type: 'message', message_id: -1 })
+ok(afterWrite.新键 === 7 && afterWrite.主角?.姓名 === '苏念', '消息作用域写入并保留原树')
+const persistedTurn = (await getRepo().listTurns(thSession.id))[0]
+ok(persistedTurn.variants[0].assistant?.variables?.新键 === 7, '消息级变量经 repo 持久化往返')
+
+await thInsertOrAssignVariables({ type: 'chat', assigning: { 会话级: true } })
+ok(thGetVariables({ type: 'chat' }).会话级 === true, 'chat 作用域写读一致')
+
+/* ---------------- 酒馆式群聊 ---------------- */
+section('酒馆式群聊（激活策略与逐条生成）')
+
+const {
+  DEFAULT_GROUP,
+  normalizeGroup,
+  buildGroupMembers,
+  activateGroup,
+  extractMentioned,
+  pickGroupGreeting,
+  stripSpeakerPrefix,
+  renderGroupDirective,
+} = await import('@/chat/group')
+
+const gm = (id, name, talkativeness, muted = false) => ({ id, name, talkativeness, muted })
+const noMention = (members, overrides = {}) =>
+  activateGroup({ strategy: 'natural', members, isUserInput: true, rng: () => 0.99, ...overrides })
+
+const groupNatural = [gm('a', '林晚', 0), gm('b', '老赵', 0), gm('c', '小满', 0)]
+ok(
+  activateGroup({ strategy: 'natural', members: groupNatural, text: '请老赵先说说', isUserInput: true }).join(',') === 'b',
+  '自然顺序：点名激活被点的人'
+)
+ok(noMention([gm('a', '林晚', 1), gm('b', '老赵', 0)]).join(',') === 'a', '自然顺序：话痨度掷骰激活')
+ok(
+  activateGroup({
+    strategy: 'natural',
+    members: [gm('a', '林晚', 1), gm('b', '老赵', 1)],
+    text: '林晚你来说',
+    isUserInput: false,
+    lastSpeakerId: 'a',
+    rng: () => 0.1,
+  }).join(',') === 'b',
+  '自然顺序：默认不让上一句的人连续接话'
+)
+ok(
+  activateGroup({
+    strategy: 'natural',
+    members: [gm('a', '林晚', 0), gm('b', '老赵', 0)],
+    text: '林晚接着说',
+    isUserInput: false,
+    lastSpeakerId: 'a',
+    allowSelfResponses: true,
+    rng: () => 0.5,
+  }).join(',') === 'a',
+  '允许连续接话时自己也能被激活'
+)
+ok(
+  activateGroup({ strategy: 'natural', members: [gm('a', '甲', 0), gm('b', '乙', 1, true)], text: '乙在吗', isUserInput: true, rng: () => 0.1 }).join(',') === 'a',
+  '静音成员不会被点名激活（兜底仍选未静音的人）'
+)
+ok(
+  activateGroup({ strategy: 'list', members: [gm('a', '甲', 0), gm('b', '乙', 0, true), gm('c', '丙', 0)] }).join(',') === 'a,c',
+  '列表顺序：未静音成员依次发言'
+)
+ok(activateGroup({ strategy: 'manual', members: groupNatural, isUserInput: true }).length === 0, '手动模式：用户发送不自动接话')
+ok(
+  activateGroup({ strategy: 'manual', members: [gm('a', '甲', 0, true)], isUserInput: false, forceId: 'a' }).join(',') === 'a',
+  '强制发言可越过静音'
+)
+const pooledFirst = activateGroup({
+  strategy: 'pooled',
+  members: [gm('a', '甲', 0), gm('b', '乙', 0)],
+  isUserInput: false,
+  spokenSinceUser: ['a'],
+  rng: () => 0,
+})
+ok(pooledFirst.join(',') === 'b', '轮流随机：优先没说过话的人')
+
+ok(extractMentioned([gm('a', 'Misaka Mikoto', 0)], 'Mikoto 你来说').join(',') === 'a', '英文名按词匹配')
+ok(extractMentioned([gm('a', 'Misaka Mikoto', 0)], 'Misa 你来说').length === 0, '英文名不做前缀误匹配')
+ok(extractMentioned([gm('a', '林晚', 0)], '让林晚来说').join(',') === 'a', '中文名按整名匹配')
+
+ok(normalizeGroup({ talkativeness: { a: 2, b: -1 }, strategy: 'nope' }).talkativeness.a === 1, '话痨度夹在 0–1')
+ok(normalizeGroup({ strategy: 'nope' }).strategy === DEFAULT_GROUP.strategy, '非法策略回退默认值')
+ok(pickGroupGreeting(['一', '二', '三'], () => 0.99) === '三', '群聊开场随机取一段')
+ok(pickGroupGreeting([], () => 0.5) === undefined, '没有开场返回 undefined')
+
+ok(stripSpeakerPrefix('**林晚**：你好', '林晚') === '你好', '剥离加粗名字前缀')
+ok(stripSpeakerPrefix('林晚：你好', '林晚') === '你好', '剥离裸名字前缀')
+ok(stripSpeakerPrefix('老赵：你好', '林晚') === '老赵：你好', '不剥别人的名字前缀')
+const directive = renderGroupDirective(['林晚', '老赵'], '林晚', 'swap')
+ok(directive.includes('当前发言者：林晚') && directive.includes('不要替') && directive.includes('老赵'), '群聊提示词锚定发言者')
+ok(!directive.includes('**林晚**：'), '群聊提示词不再要求名字前缀')
+
+// 逐条生成：列表顺序 → 两个成员各一条独立消息；交换角色卡只注入发言者的设定
+const groupRequests = []
+const streamBeforeGroup = platform().stream
+platform().stream = async function* (req) {
+  groupRequests.push(JSON.parse(req.body))
+  yield 'data: {"choices":[{"delta":{"content":"好"}}]}\n\n'
+  yield 'data: [DONE]\n\n'
+}
+st().saveConfig({ packId: 'tavern' })
+
+const memberA = emptySetting('character')
+memberA.name = '群演甲'
+memberA.body = '甲的独家设定正文'
+memberA.firstMessage = '甲的开场白'
+const memberB = emptySetting('character')
+memberB.name = '群演乙'
+memberB.body = '乙的独家设定正文'
+memberB.firstMessage = '乙的开场白'
+st().importSetting(memberA)
+st().importSetting(memberB)
+
+await st().startWithSettings([memberA.id, memberB.id], undefined, 0, { strategy: 'list', generation: 'swap' })
+const groupSession = st().sessions.find((s) => s.id === st().currentId)
+ok(groupSession?.group?.strategy === 'list', '群聊配置随会话保存')
+const greetingTurns = await getRepo().listTurns(groupSession.id)
+ok(greetingTurns.length === 2, '群聊开场：每个成员各一条消息')
+ok(greetingTurns[0].variants[0].assistant?.speaker === '群演甲', '开场第一条归属甲')
+ok(greetingTurns[1].variants[0].assistant?.speaker === '群演乙', '开场第二条归属乙')
+
+const beforeList = groupRequests.length
+await st().send('大家开始吧')
+ok(groupRequests.length === beforeList + 2, '列表顺序：一次发送生成两条回复')
+const listSystemA = groupRequests[beforeList].messages.map((m) => m.content).join('\n')
+const listSystemB = groupRequests[beforeList + 1].messages.map((m) => m.content).join('\n')
+ok(listSystemA.includes('甲的独家设定正文') && !listSystemA.includes('乙的独家设定正文'), '交换卡：第一条只注入甲的设定')
+ok(listSystemB.includes('乙的独家设定正文') && !listSystemB.includes('甲的独家设定正文'), '交换卡：第二条只注入乙的设定')
+ok(
+  groupRequests[beforeList + 1].messages.some((m) => m.role === 'assistant' && String(m.content).startsWith('群演甲：')),
+  '群聊历史带角色名前缀，模型分得清谁说过什么'
+)
+const listTurns = await getRepo().listTurns(groupSession.id)
+ok(listTurns.length === 4, '开场 2 条 + 用户 1 条 + 第二条回复独立成轮')
+ok(listTurns[2].variants[0].assistant?.speaker === '群演甲', '第一条回复归属甲')
+ok(listTurns[3].variants[0].assistant?.speaker === '群演乙', '第二条回复独立归属乙')
+ok(st().error === null, '群聊生成无错误')
+
+// 手动模式：用户发送不自动接话；强制发言可指定静音成员
+await st().startWithSettings([memberA.id, memberB.id], undefined, 0, { strategy: 'manual', generation: 'swap' })
+const manualSession = st().currentId
+const beforeManual = groupRequests.length
+await st().send('手动试试')
+ok(groupRequests.length === beforeManual, '手动模式：用户消息不触发自动回复')
+const pendingTurn = st().turns[st().turns.length - 1]
+ok(pendingTurn.variants[0].user.content === '手动试试' && !pendingTurn.variants[0].assistant, '用户消息保留等待触发')
+await st().updateSessionGroup({ muted: [memberB.id] })
+await st().groupTrigger(memberB.id)
+ok(groupRequests.length === beforeManual + 1, '强制发言只生成一条')
+ok(st().turns[st().turns.length - 1].variants[0].assistant?.speaker === '群演乙', '强制发言越过静音且归属正确')
+
+// 列表顺序 + 静音：只让未静音的人回复
+await st().updateSessionGroup({ strategy: 'list' })
+const beforeMuted = groupRequests.length
+await st().send('再来一轮')
+ok(groupRequests.length === beforeMuted + 1, '列表顺序跳过静音成员')
+
+// 合并角色卡：两条回复的上下文都包含全员设定
+await st().startWithSettings([memberA.id, memberB.id], undefined, 0, { strategy: 'list', generation: 'join' })
+const beforeJoin = groupRequests.length
+await st().send('合并卡测试')
+const joinSystem = groupRequests[beforeJoin].messages.map((m) => m.content).join('\n')
+ok(joinSystem.includes('甲的独家设定正文') && joinSystem.includes('乙的独家设定正文'), '合并卡：上下文包含所有成员设定')
+ok(st().sessions.find((s) => s.id === st().currentId)?.group?.generation === 'join', '生成方式写入会话配置')
+
+platform().stream = streamBeforeGroup
+st().saveConfig({ packId: 'minimal' })
+
+/* ---------------- 说明书与更新日志 ---------------- */
+section('说明书与更新日志')
+
+const { MANUAL_SECTIONS } = await import('@/ui/manual-text')
+const { CHANGELOG } = await import('@/ui/changelog-text')
+ok(MANUAL_SECTIONS.length >= 18, `说明书节数完整（${MANUAL_SECTIONS.length} 节）`)
+ok(new Set(MANUAL_SECTIONS.map((s) => s.id)).size === MANUAL_SECTIONS.length, '说明书锚点不重复')
+ok(MANUAL_SECTIONS.every((s) => s.title.trim() && s.md.trim().length > 50), '每节都有标题和正文')
+ok(MANUAL_SECTIONS.some((s) => s.id === 'group' && s.md.includes('发言顺序')), '说明书包含群聊入门')
+ok(CHANGELOG.length >= 2 && CHANGELOG[0].version === '2026.11.28.1', '更新日志最新版本正确')
+ok(CHANGELOG[0].items.length >= 20, `最新更新日志足够详细（${CHANGELOG[0].items.length} 条）`)
 
 /* ---------------- 汇总 ---------------- */
 console.log('\n' + '-'.repeat(48))

@@ -30,11 +30,22 @@ import {
   collectEntries,
   greetingList,
   greetingScript,
+  greetingsOf,
   renderCast,
   renderPersona,
   renderSettings,
   type SettingDoc,
 } from './settings'
+import {
+  DEFAULT_GROUP,
+  activateGroup,
+  buildGroupMembers,
+  normalizeGroup,
+  pickGroupGreeting,
+  renderGroupDirective,
+  stripSpeakerPrefix,
+  type GroupConfig,
+} from './group'
 import { deleteSetting, migrateLegacySettings, saveSetting } from '@/db/settings'
 import type { MemoryRecord } from '@/db'
 import type { FolderArea, VaultFolder } from './folders'
@@ -45,7 +56,9 @@ import { deletePrompt, listPrompts, savePrompt } from '@/db/vault'
 import { expireImages, hasContent, IMAGE_RESEND_TURNS, userText, wireImages, type Attachment } from './attachments'
 import { describeAttachments } from './vision'
 import { withCredential } from './credentials'
-import { contextWindow, matchWorldEntries, renderWorldEntries } from './lore'
+import { buildDepthInjections, contextWindow, injectDepthMessages, matchWorldEntries, renderWorldEntries, splitWorldEntries, type DepthInjection } from './lore'
+import { extractSpeaker, parseMentionTarget } from './settings'
+import { bindThStore } from './th-runtime'
 import { DEFAULT_PACK_ID, findPack, renderTemplate } from './packs'
 import { PROVIDERS, findProvider } from './providers'
 import { fetchModels, loadCachedModels, type ModelInfo } from './models'
@@ -53,6 +66,9 @@ import { reasoningEfforts } from './reasoning'
 import { resolveProtocol } from './protocol'
 import type { WireMessage, WireTool } from './protocol'
 import { applyMacros } from './characters'
+import { applyPromptRegex } from './card-regex'
+import { applyUpdateVariables, expandVarMacros } from './variables'
+import { fireThEvent, TH_EVENTS } from './th-events'
 import { buildPrompt, type PromptInput } from './prompt/build'
 import {
   UPDATE_SETTING_TOOL,
@@ -151,7 +167,12 @@ const REVIEW_EVERY = 3
 const MAX_TOOL_ROUNDS = 3
 
 /** 把某轮之前的历史拍平成下游要的 messages（只取激活版本） */
-function wireHistory(turns: ChatTurn[], uptoIdx: number, imageResendTurns: number): WireTurn[] {
+function wireHistory(
+  turns: ChatTurn[],
+  uptoIdx: number,
+  imageResendTurns: number,
+  labelSpeakers = false
+): WireTurn[] {
   const out: WireTurn[] = []
   // 图片只保留最近 N 轮（含本轮）：历史里的原图每一轮都会重新计费，
   // 更早的换成占位说明，模型知道有图但看不到。识图描述本来就是文字，不受影响。
@@ -178,7 +199,14 @@ function wireHistory(turns: ChatTurn[], uptoIdx: number, imageResendTurns: numbe
       })
       out.push({ role: 'tool', content: call.result, toolCallId: call.id, toolName: call.name })
     }
-    if (variant.assistant?.content) out.push({ role: 'assistant', content: variant.assistant.content })
+    if (variant.assistant?.content) {
+      // 群聊历史给每条回复标上说话人，模型才分得清谁说过什么
+      const speaker = labelSpeakers ? variant.assistant.speaker : undefined
+      out.push({
+        role: 'assistant',
+        content: speaker ? `${speaker}：${variant.assistant.content}` : variant.assistant.content,
+      })
+    }
   }
   return out
 }
@@ -225,6 +253,11 @@ interface AppState {
    */
   pendingGreetingIndex: number
   setPendingGreeting: (index: number) => void
+  /** 酒馆模式子模式：单聊 / 群聊（起始页选择，不落库） */
+  pendingGroupMode: 'solo' | 'group'
+  pendingGroup: GroupConfig
+  setPendingGroupMode: (mode: 'solo' | 'group') => void
+  updatePendingGroup: (patch: Partial<GroupConfig>) => void
   /** 搜索命中浏览状态：当前会话里正在看第几条命中 */
   browse: { query: string; index: number } | null
   settings: SettingDoc[]
@@ -247,7 +280,7 @@ interface AppState {
    * 直接用一组设定开新会话。
    * 界面上走 startFromGreeting（选了开场白才开），这里保留给自检脚本跑完整链路。
    */
-  startWithSettings: (ids: string[], promptId?: string, greetingIndex?: number) => Promise<void>
+  startWithSettings: (ids: string[], promptId?: string, greetingIndex?: number, group?: GroupConfig) => Promise<void>
   savePrompt: (item: PromptItem) => void
   removePrompt: (id: string) => void
   applyPrompt: (prompt: PromptItem) => Promise<void>
@@ -261,6 +294,18 @@ interface AppState {
   setSettings: (open: boolean) => void
   setPack: (packId: string) => Promise<void>
   applyAction: (template: string) => void
+  /** 卡变量写入口：面板桥的 setvar、QR 的 /setvar 都落到这里 */
+  setSessionVariables: (id: string, variables: Record<string, unknown>) => Promise<void>
+  /** TH 运行时回写轮次状态（消息变量/内容更新后刷新内存视图） */
+  setTurns: (turns: ChatTurn[]) => void
+  /** 群聊设置：只改当前会话，立即落库 */
+  updateSessionGroup: (patch: Partial<GroupConfig>) => Promise<void>
+  /** 群聊成员排序：复用 settingIds 的顺序 */
+  moveGroupMember: (settingId: string, delta: -1 | 1) => Promise<void>
+  /** 群聊点名/强制发言触发一轮（forceId 指定发言人，静音也能被强制） */
+  groupTrigger: (forceId?: string) => Promise<void>
+  groupPanelOpen: boolean
+  setGroupPanel: (open: boolean) => void
   openSearchHit: (sessionId: string, query: string) => Promise<void>
   setBrowseIndex: (index: number) => void
   exitBrowse: () => void
@@ -318,9 +363,17 @@ export const useApp = create<AppState>()((set, get) => {
     index: number,
     history: WireTurn[],
     sessionId: string,
-    /** 舞台指令：只对这一次生成生效，贴在历史末尾，角色听不见 */
-    extraSystem?: string
+    options?: {
+      /** 舞台指令：只对这一次生成生效，贴在历史末尾，角色听不见 */
+      extraSystem?: string
+      /** 群聊：这一条由谁生成 */
+      speakerId?: string
+      group?: GroupConfig
+    }
   ) => {
+    const extraSystem = options?.extraSystem
+    const group = options?.group
+    const speakerId = options?.speakerId
     // 计时从「点发送」开始，含思考、工具轮次和所有重试，到最后一个字为止
     const startedAt = Date.now()
     set({ streamingTurnId: turnId, error: null })
@@ -336,6 +389,15 @@ export const useApp = create<AppState>()((set, get) => {
     const docs = ids
       .map((id) => get().settings.find((d) => d.id === id))
       .filter((d): d is SettingDoc => Boolean(d))
+    const charDocs = docs.filter((d) => d.kind === 'character')
+    const speakerDoc = speakerId ? docs.find((d) => d.id === speakerId) : undefined
+    // 交换角色卡：上下文里只放当前发言者的卡；合并角色卡：全员都给
+    const activeDocs =
+      group && speakerDoc
+        ? group.generation === 'swap'
+          ? [speakerDoc]
+          : docs
+        : docs
 
     let settingBlock = ''
     let personaBlock = ''
@@ -343,19 +405,44 @@ export const useApp = create<AppState>()((set, get) => {
     let worldBlock = ''
     let worldHits: string[] = []
     let postHistory = ''
+    // 酒馆生态事件：生成开始（卡脚本可在此做生成前处理）
+    fireThEvent(TH_EVENTS.GENERATION_STARTED, { sessionId, turnId })
+    // 世界书 @D 深度条目 + 卡级 depth_prompt 都从这里汇入历史
+    const depthInjections: DepthInjection[] = []
+    let mentionTarget: string | undefined
     if (docs.length > 0) {
-      settingBlock = renderSettings(docs, userName)
-      castBlock = renderCast(docs)
-      // 多个「角色卡」同场时 {{char}} 指向谁都不对，统一说「对方」；
+      settingBlock = renderSettings(activeDocs, userName)
+      // 群聊：锚定当前发言者，不要求名字前缀（发言人由数据层记录）
+      if (group && speakerDoc) {
+        castBlock = renderGroupDirective(
+          charDocs.map((d) => d.name),
+          speakerDoc.name,
+          group.generation
+        )
+        if (group.scenarioOverride?.trim()) {
+          castBlock = `## 群聊场景（覆盖所有角色卡的情境）\n${group.scenarioOverride.trim()}\n\n${castBlock}`
+        }
+      }
+      // 先解析点名再渲染：否则「本次只以它发言」这一行永远拿不到
+      mentionTarget = group ? undefined : parseMentionTarget(history, docs)
+      if (!group || !speakerDoc) castBlock = renderCast(docs, mentionTarget)
+      // 多个「角色卡」同场且没有指定发言者时 {{char}} 指向谁都不对，统一说「对方」；
       // 写作模式的多份设定不是多角色，仍按第一份的名字替换
-      const castCount = docs.filter((d) => d.kind === 'character').length
-      personaBlock = renderPersona(get().config.persona, userName, castCount > 1 ? '对方' : (docs[0]?.name ?? ''))
+      const castCount = charDocs.length
+      personaBlock = renderPersona(
+        get().config.persona,
+        userName,
+        speakerDoc?.name ?? (castCount > 1 ? '对方' : (docs[0]?.name ?? ''))
+      )
       const recent = contextWindow(history.map((m) => m.content))
-      const matched = matchWorldEntries(collectEntries(docs, userName), recent)
-      worldBlock = renderWorldEntries(matched)
+      const matched = matchWorldEntries(collectEntries(activeDocs, userName), recent)
+      // @D 深度条目分流：普通条目进 world 槽位，深度条目在组装时插进历史
+      const { inPrompt, atDepth } = splitWorldEntries(matched)
+      worldBlock = renderWorldEntries(inPrompt)
+      depthInjections.push(...buildDepthInjections(atDepth))
       worldHits = matched.map((e) => e.content.trim().replace(/\s+/g, ' ').slice(0, 40))
       // 历史之后的追加指令：每轮都贴在最末尾，比 system 更靠近当前发言
-      postHistory = docs
+      postHistory = activeDocs
         .map((doc) => (doc.postHistory?.trim() ? applyMacros(doc.postHistory, doc.name, userName) : ''))
         .filter(Boolean)
         .join('\n\n')
@@ -402,6 +489,9 @@ export const useApp = create<AppState>()((set, get) => {
     // 强制审查：不是每轮都催，隔几轮回头看一眼设定有没有落后于正文
     const turnIdx = get().turns.find((t) => t.id === turnId)?.idx ?? 0
 
+    // 酒馆生态事件：命令已处理、即将组装提示词（卡脚本在此写变量/设定）
+    fireThEvent(TH_EVENTS.GENERATION_AFTER_COMMANDS, { sessionId, turnId })
+
     // 所有提示词在这里一次性组装。调用方只填原料，顺序由 buildPrompt 的 SLOTS 决定——
     // 以前这里是 10 个位置参数，加一层就得改签名、改测试、改调用点。
     const promptInput: PromptInput = {
@@ -420,11 +510,17 @@ export const useApp = create<AppState>()((set, get) => {
       review: evolution && turnIdx > 0 && turnIdx % REVIEW_EVERY === 0 ? reviewNudge() : '',
     }
     const built = buildPrompt(promptInput)
+    // 卡变量宏（{{getvar}} 系）：把会话变量树注入提示词；没有变量时是恒等变换
+    const vars = session?.variables ?? {}
+    const expanded = {
+      system: expandVarMacros(built.system, vars),
+      tail: expandVarMacros(built.tail, vars),
+    }
 
     const effectiveConfig: ChatConfig = {
       ...get().config,
       nativeSearch: nativeSearch ?? undefined,
-      systemPrompt: built.system,
+      systemPrompt: expanded.system,
     }
 
     let answer = ''
@@ -433,10 +529,23 @@ export const useApp = create<AppState>()((set, get) => {
     let failure: string | null = null
     const toolCalls: ToolCallRecord[] = []
     let nativeSources: WebSource[] = []
+    // 卡正则脚本（[不发送] 类）：发请求前把协议标记从历史里清掉，
+    // 存储的原文不动，下一轮重新从仓库取了再算
+    const scriptedHistory = applyPromptRegex(history, docs, userName)
+    // 世界书 @D 条目 + 卡级 depth_prompt：按深度插进对话历史
+    for (const doc of activeDocs) {
+      if (!doc.depthPrompt?.prompt.trim()) continue
+      depthInjections.push({
+        content: applyMacros(doc.depthPrompt.prompt, doc.name, userName),
+        depth: doc.depthPrompt.depth ?? 4,
+        role: doc.depthPrompt.role === 'user' ? 'user' : doc.depthPrompt.role === 'assistant' ? 'assistant' : 'system',
+      })
+    }
+    const depthHistory = injectDepthMessages(scriptedHistory, depthInjections)
     // 追加层贴在历史之后：位置最靠后，权重最高，且不进对话记录
-    let messages: WireMessage[] = built.tail
-      ? [...history, { role: 'system', content: built.tail }]
-      : history
+    let messages: WireMessage[] = expanded.tail
+      ? [...depthHistory, { role: 'system', content: expanded.tail }]
+      : depthHistory
 
     /** 执行一次工具调用；失败也要把错误回传给模型，否则它没法自我纠正 */
     const runTool = async (id: string, name: string, argsJson: string): Promise<ToolCallRecord> => {
@@ -510,6 +619,7 @@ export const useApp = create<AppState>()((set, get) => {
             if (Date.now() - lastPersist > 900) {
               lastPersist = Date.now()
               void persistTurn(turnId)
+              fireThEvent(TH_EVENTS.MESSAGE_UPDATED, turnIdx)
             }
           }
         }
@@ -560,6 +670,9 @@ export const useApp = create<AppState>()((set, get) => {
       set({ toolStatus: null })
     }
 
+    // 群聊：模型偶尔模仿历史自带「名字：」，入库前只剥掉当前发言者的前缀
+    if (group && speakerDoc) answer = stripSpeakerPrefix(answer, speakerDoc.name)
+
     let finalUsage: Usage =
       usage ??
       (answer || thinking
@@ -577,8 +690,21 @@ export const useApp = create<AppState>()((set, get) => {
       finalUsage = { ...finalUsage, cacheRead: estimateCacheHit(prefix) }
     }
 
+    // 卡变量先算：结果要挂到这一条 AI 消息上（消息级变量——状态栏按消息读自己的状态）
+    const { vars: nextVars, changed: varsChanged } = answer
+      ? applyUpdateVariables(session?.variables ?? {}, answer)
+      : { vars: (session?.variables ?? {}) as Record<string, unknown>, changed: false }
+    const messageVars = varsChanged
+      ? (nextVars as Record<string, unknown>)
+      : (session?.variables ?? {}) as Record<string, unknown>
+    // 群聊发言人：由调度层指定；单聊仍按 @点名 / 回复开头的「**名字**：」提取
+    const charNames = charDocs.map((d) => d.name)
+    const speaker = speakerDoc?.name ?? extractSpeaker(answer, charNames, mentionTarget)
+
     const assistant: TurnAssistant = {
       content: answer || (thinking ? '' : failure ? `（${failure}）` : '（已取消）'),
+      variables: messageVars && Object.keys(messageVars).length > 0 ? messageVars : undefined,
+      speaker,
       reasoning: thinking || undefined,
       usage: finalUsage,
       model: get().config.model,
@@ -608,6 +734,23 @@ export const useApp = create<AppState>()((set, get) => {
       ),
     }))
     await persistTurn(turnId)
+    // 卡变量：落会话级变量树（下一轮 {{getvar}} 的数据源）；消息级快照已挂在 assistant 上
+    if (varsChanged && sessionId) {
+      await getRepo().setSessionVariables(sessionId, nextVars as Record<string, unknown>)
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId ? { ...s, variables: nextVars as Record<string, unknown> } : s
+        ),
+      }))
+      // 酒馆生态事件：MVU 系状态栏脚本监听这个时机重渲染
+      fireThEvent(TH_EVENTS.VARIABLE_UPDATE_ENDED, { sessionId, vars: nextVars })
+    }
+    // 酒馆生态事件：本轮完成（全局脚本在此渲染状态栏等）
+    fireThEvent(TH_EVENTS.MESSAGE_UPDATED, turnIdx)
+    fireThEvent(TH_EVENTS.MESSAGE_RECEIVED, turnIdx)
+    fireThEvent(TH_EVENTS.CHARACTER_MESSAGE_RENDERED, turnIdx)
+    fireThEvent(TH_EVENTS.GENERATION_ENDED, { sessionId, turnId })
+
     // 挂了角色卡的会话保留角色名做标题——改成第一句话反而看不出是谁；
     // 用户手动改过的标题更不该被覆盖
     const hasCast = Boolean(session?.settingIds?.length || session?.characterId)
@@ -667,9 +810,33 @@ export const useApp = create<AppState>()((set, get) => {
 
   /**
    * 把开场白写成第一条「只有 assistant」的轮次。
-   * pick 是用户选的那一段：单卡按序号取，群聊仍然是每张卡各出第一段。
+   * 单聊：用 pick 指定的那一段（越界夹回）。
+   * 群聊：每个成员各占一条消息，随机取该卡的 first_mes / 备选开场（对齐酒馆）。
    */
-  const appendGreeting = async (sessionId: string, docs: SettingDoc[], pick = 0): Promise<void> => {
+  const appendGreeting = async (
+    sessionId: string,
+    docs: SettingDoc[],
+    pick = 0,
+    group?: GroupConfig
+  ): Promise<void> => {
+    if (group) {
+      const userName = get().config.userName ?? '你'
+      let idx = (await getRepo().listTurns(sessionId)).length
+      for (const doc of docs) {
+        if (doc.kind !== 'character') continue
+        const text = pickGroupGreeting(greetingsOf(doc, userName))
+        if (!text) continue
+        await getRepo().appendTurn({
+          id: newId(),
+          sessionId,
+          idx: idx++,
+          active: 0,
+          createdAt: Date.now(),
+          variants: [{ user: { content: '' }, assistant: { content: text, speaker: doc.name }, path: [] }],
+        })
+      }
+      return
+    }
     const text = greetingScript(docs, get().config.userName ?? '你', pick)
     if (!text) return
     await getRepo().appendTurn({
@@ -690,6 +857,106 @@ export const useApp = create<AppState>()((set, get) => {
         ? docs[0].name
         : docs.map((d) => d.name).join(' · ').slice(0, 20)
 
+  /** 会话挂载的文档（settingIds 顺序 = 群成员顺序） */
+  const docsOfSession = (sessionId: string): { session?: Session; docs: SettingDoc[] } => {
+    const session = get().sessions.find((s) => s.id === sessionId)
+    const ids = session?.settingIds?.length ? session.settingIds : session?.characterId ? [session.characterId] : []
+    const docs = ids
+      .map((id) => get().settings.find((d) => d.id === id))
+      .filter((d): d is SettingDoc => Boolean(d))
+    return { session, docs }
+  }
+
+  /** 群聊配置：显式配置优先；老会话挂多张角色卡时按官方默认群聊处理 */
+  const groupOf = (session: Session | undefined, docs: SettingDoc[]): GroupConfig | undefined => {
+    if (session?.group) return normalizeGroup(session.group)
+    return docs.filter((d) => d.kind === 'character').length >= 2 ? { ...DEFAULT_GROUP } : undefined
+  }
+
+  /** 从最近轮次提取：最后一条正文、上一位发言人、自上次用户发言后说过话的人 */
+  const groupRoundContext = (turns: ChatTurn[]) => {
+    let text = ''
+    let lastSpeakerName: string | undefined
+    const spokenNames: string[] = []
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const variant = activeVariant(turns[i])
+      if (hasContent(variant.user.content, variant.user.attachments)) {
+        if (!text) text = variant.user.content
+        break
+      }
+      if (!variant.assistant?.content) continue
+      if (!text) text = variant.assistant.content
+      if (variant.assistant.speaker) {
+        if (!lastSpeakerName) lastSpeakerName = variant.assistant.speaker
+        if (!spokenNames.includes(variant.assistant.speaker)) spokenNames.push(variant.assistant.speaker)
+      }
+    }
+    return { text, lastSpeakerName, spokenNames }
+  }
+
+  let autoTimer: ReturnType<typeof setTimeout> | null = null
+  const clearAutoTimer = () => {
+    if (autoTimer) {
+      clearTimeout(autoTimer)
+      autoTimer = null
+    }
+  }
+  const scheduleAuto = (sessionId: string, group: GroupConfig) => {
+    clearAutoTimer()
+    if (!group.autoMode) return
+    autoTimer = setTimeout(
+      () => {
+        autoTimer = null
+        const state = get()
+        if (state.currentId !== sessionId || state.streamingTurnId) return
+        void state.groupTrigger()
+      },
+      (group.autoModeDelay ?? 5) * 1000
+    )
+  }
+
+  /** 按激活顺序让成员逐个生成各自的独立消息（ST 的一轮多消息） */
+  const runGroupRound = async (
+    sessionId: string,
+    docs: SettingDoc[],
+    group: GroupConfig,
+    speakerIds: string[],
+    fillTurnId?: string,
+    fillIndex = 0
+  ) => {
+    clearAutoTimer()
+    for (let i = 0; i < speakerIds.length; i++) {
+      const speaker = docs.find((d) => d.id === speakerIds[i] && d.kind === 'character')
+      if (!speaker) continue
+      let targetId = i === 0 ? fillTurnId : undefined
+      if (!targetId) {
+        const turns = get().turns
+        const turn: ChatTurn = {
+          id: newId(),
+          sessionId,
+          idx: turns.length,
+          variants: [{ user: { content: '' }, path: pathOf(turns, turns.length) }],
+          active: 0,
+          createdAt: Date.now(),
+        }
+        await getRepo().appendTurn(turn)
+        set({ turns: [...get().turns, turn] })
+        targetId = turn.id
+      }
+      const target = get().turns.find((t) => t.id === targetId)
+      if (!target) break
+      const history = wireHistory(
+        get().turns,
+        target.idx,
+        get().config.imageResendTurns ?? IMAGE_RESEND_TURNS,
+        true
+      )
+      await generate(target.id, i === 0 ? fillIndex : 0, history, sessionId, { speakerId: speaker.id, group })
+      if (get().error || get().streamingTurnId) break
+    }
+    scheduleAuto(sessionId, group)
+  }
+
   return {
     ready: false,
     config: loadConfig(),
@@ -709,6 +976,9 @@ export const useApp = create<AppState>()((set, get) => {
     pendingPromptId: null,
     pendingSettingIds: [],
     pendingGreetingIndex: 0,
+    pendingGroupMode: 'solo',
+    pendingGroup: { ...DEFAULT_GROUP },
+    groupPanelOpen: false,
     browse: null,
     settings: [],
     prompts: [],
@@ -760,6 +1030,11 @@ export const useApp = create<AppState>()((set, get) => {
     setDraft(text) {
       localStorage.setItem(draftKey(get().currentId), text)
       set({ draft: text })
+      // 对齐酒馆：用户一开始打字就关掉自动接话（已经排队的生成不打断）
+      if (text.trim()) {
+        const session = get().sessions.find((s) => s.id === get().currentId)
+        if (session?.group?.autoMode) void get().updateSessionGroup({ autoMode: false })
+      }
     },
 
     /** 把某一轮打回输入框：文字进草稿，附件由 Composer 从这一轮取 */
@@ -893,8 +1168,9 @@ export const useApp = create<AppState>()((set, get) => {
     },
 
     /** 用一组设定文件开新会话：建会话 → 插入开场白 → 切过去（自检脚本用） */
-    async startWithSettings(ids, promptId, greetingIndex = 0) {
+    async startWithSettings(ids, promptId, greetingIndex = 0, group) {
       const docs = mountSettings(ids)
+      const normalized = group ? normalizeGroup(group) : undefined
       const session = await getRepo().createSession(
         titleFor(docs),
         undefined,
@@ -902,7 +1178,8 @@ export const useApp = create<AppState>()((set, get) => {
         docs.length > 0 ? docs.map((d) => d.id) : undefined,
         promptId
       )
-      await appendGreeting(session.id, docs, greetingIndex)
+      if (normalized) await getRepo().setSessionGroup(session.id, normalized)
+      await appendGreeting(session.id, docs, greetingIndex, normalized)
 
       set({
         sessions: await getRepo().listSessions(),
@@ -936,6 +1213,102 @@ export const useApp = create<AppState>()((set, get) => {
       set({ draft: renderTemplate(template, get().draft) })
     },
 
+    /** 卡变量写入口：面板桥的 setvar、QR 的 /setvar 都落到这里。
+     *  先改内存再落库——酒馆的变量 API 是同步语义，写完立刻要能读到。 */
+    async setSessionVariables(id, variables) {
+      set((state) => ({ sessions: state.sessions.map((s) => (s.id === id ? { ...s, variables } : s)) }))
+      await getRepo().setSessionVariables(id, variables)
+    },
+
+    setTurns(turns) {
+      set({ turns })
+    },
+
+    setPendingGroupMode(mode) {
+      set({ pendingGroupMode: mode })
+    },
+
+    updatePendingGroup(patch) {
+      set({ pendingGroup: normalizeGroup({ ...get().pendingGroup, ...patch }) })
+    },
+
+    setGroupPanel(open) {
+      set({ groupPanelOpen: open })
+    },
+
+    /** 改当前会话的群聊设置；关掉自动模式时顺手取消排队的自动接话 */
+    async updateSessionGroup(patch) {
+      const { currentId } = get()
+      if (!currentId) return
+      const { session, docs } = docsOfSession(currentId)
+      if (!session) return
+      const next = normalizeGroup({ ...(groupOf(session, docs) ?? DEFAULT_GROUP), ...patch })
+      clearAutoTimer()
+      await getRepo().setSessionGroup(currentId, next)
+      set({ sessions: get().sessions.map((s) => (s.id === currentId ? { ...s, group: next } : s)) })
+      if (next.autoMode && !get().streamingTurnId) scheduleAuto(currentId, next)
+    },
+
+    /** 群成员排序：只交换两个角色卡的位置，世界书等其它设定不动 */
+    async moveGroupMember(settingId, delta) {
+      const { currentId } = get()
+      if (!currentId) return
+      const session = get().sessions.find((s) => s.id === currentId)
+      if (!session) return
+      const ids = [...(session.settingIds ?? [])]
+      const chars = ids
+        .map((id, index) => ({ id, index, doc: get().settings.find((d) => d.id === id) }))
+        .filter((item) => item.doc?.kind === 'character')
+      const at = chars.findIndex((item) => item.id === settingId)
+      const to = at + delta
+      if (at < 0 || to < 0 || to >= chars.length) return
+      const a = chars[at]
+      const b = chars[to]
+      ;[ids[a.index], ids[b.index]] = [ids[b.index], ids[a.index]]
+      await getRepo().setSessionSettings(currentId, ids)
+      set({ sessions: get().sessions.map((s) => (s.id === currentId ? { ...s, settingIds: ids } : s)) })
+    },
+
+    /** 群聊点名/强制发言：不经过输入框也能让某个角色（或按策略）接话 */
+    async groupTrigger(forceId) {
+      const { currentId, turns, streamingTurnId, config } = get()
+      if (!currentId || streamingTurnId) return
+      if (!config.apiKey) {
+        set({ error: '请先在设置里填写 API Key', settingsOpen: true })
+        return
+      }
+      const { session, docs } = docsOfSession(currentId)
+      const group = groupOf(session, docs)
+      if (!group) return
+      const members = buildGroupMembers(docs, group)
+      const ctx = groupRoundContext(turns)
+      const lastSpeakerId = ctx.lastSpeakerName
+        ? members.find((m) => m.name === ctx.lastSpeakerName)?.id
+        : undefined
+      const spokenSinceUser = ctx.spokenNames
+        .map((name) => members.find((m) => m.name === name)?.id)
+        .filter((id): id is string => Boolean(id))
+      const speakerIds = activateGroup({
+        strategy: group.strategy,
+        members,
+        text: ctx.text,
+        isUserInput: false,
+        lastSpeakerId,
+        spokenSinceUser,
+        allowSelfResponses: group.allowSelfResponses,
+        forceId: forceId && members.some((m) => m.id === forceId) ? forceId : undefined,
+      })
+      if (speakerIds.length === 0) return
+      // 上一条是「只有用户消息、还没有回复」的轮次时，第一条回复补进那一轮
+      const last = turns[turns.length - 1]
+      const lastVariant = last ? activeVariant(last) : undefined
+      const fillTurnId =
+        last && lastVariant && hasContent(lastVariant.user.content, lastVariant.user.attachments) && !lastVariant.assistant
+          ? last.id
+          : undefined
+      await runGroupRound(currentId, docs, group, speakerIds, fillTurnId)
+    },
+
     /** 从搜索结果进入会话：顺带进入命中浏览模式 */
     async openSearchHit(sessionId, query) {
       await get().selectSession(sessionId)
@@ -956,6 +1329,8 @@ export const useApp = create<AppState>()((set, get) => {
     },
 
     newSession() {
+      clearAutoTimer()
+      fireThEvent(TH_EVENTS.CHAT_CHANGED, null)
       set({
         currentId: null,
         editingTurnId: null,
@@ -971,6 +1346,7 @@ export const useApp = create<AppState>()((set, get) => {
     },
 
     async selectSession(id) {
+      clearAutoTimer()
       set({
         currentId: id,
         turns: await getRepo().listTurns(id),
@@ -982,9 +1358,11 @@ export const useApp = create<AppState>()((set, get) => {
         pendingGreetingIndex: 0,
         draft: localStorage.getItem(draftKey(id)) ?? '',
       })
+      fireThEvent(TH_EVENTS.CHAT_CHANGED, id)
     },
 
     async deleteSession(id) {
+      clearAutoTimer()
       await getRepo().deleteSession(id)
       localStorage.removeItem(draftKey(id))
       const sessions = await getRepo().listSessions()
@@ -996,6 +1374,7 @@ export const useApp = create<AppState>()((set, get) => {
     },
 
     async stop() {
+      clearAutoTimer()
       controller?.abort()
       controller = null
     },
@@ -1010,6 +1389,8 @@ export const useApp = create<AppState>()((set, get) => {
         set({ error: '请先在设置里填写 API Key', settingsOpen: true })
         return
       }
+      // 用户主动发消息：自动接话先停（这一轮由用户驱动）
+      clearAutoTimer()
 
       // 配了辅助识图就把图片先转成文字，主模型只收文本
       let prepared = files
@@ -1018,11 +1399,21 @@ export const useApp = create<AppState>()((set, get) => {
         set({ toolStatus: null })
       }
 
+      const pendingGroup = (): GroupConfig | undefined => {
+        if (get().pendingGroupMode !== 'group') return undefined
+        const picked = get().pendingSettingIds
+          .map((id) => get().settings.find((d) => d.id === id))
+          .filter((d): d is SettingDoc => Boolean(d && d.kind === 'character'))
+        return picked.length >= 2 ? normalizeGroup(get().pendingGroup) : undefined
+      }
+
       let sessionId = get().currentId
+      let group: GroupConfig | undefined
       if (!sessionId) {
         // 起始页勾好的设定随第一句话一起落库——直接打字也算「开始」，
         // 开场白用当时选的那一段，不会默默退回第一段
         const docs = mountSettings(get().pendingSettingIds)
+        group = pendingGroup()
         // 只有附件时用文件名当标题，否则第一句话；挂了卡就用卡名，方便在抽屉里认
         const seed = content || prepared?.[0]?.name || '新会话'
         const session = await getRepo().createSession(
@@ -1033,6 +1424,7 @@ export const useApp = create<AppState>()((set, get) => {
           get().pendingPromptId ?? undefined
         )
         sessionId = session.id
+        if (group) await getRepo().setSessionGroup(session.id, group)
         const pick = get().pendingGreetingIndex
         set({
           currentId: session.id,
@@ -1041,20 +1433,25 @@ export const useApp = create<AppState>()((set, get) => {
           pendingSettingIds: [],
           pendingGreetingIndex: 0,
         })
-        // 开场白先落成第一条，用户这句话接在它后面
-        await appendGreeting(session.id, docs, pick)
+        // 开场白先落成第一条，用户这句话接在它后面（群聊是每个成员各一条）
+        await appendGreeting(session.id, docs, pick, group)
         set({ turns: await getRepo().listTurns(session.id) })
       } else if (get().turns.length === 0 && get().pendingSettingIds.length > 0) {
         // 已经处在一个空会话里（从抽屉点进来的），把刚勾的设定补挂上去
         const docs = mountSettings(get().pendingSettingIds)
+        group = pendingGroup()
         const pick = get().pendingGreetingIndex
         await getRepo().setSessionSettings(
           sessionId,
           docs.map((d) => d.id)
         )
+        if (group) await getRepo().setSessionGroup(sessionId, group)
         set({ sessions: await getRepo().listSessions(), pendingSettingIds: [], pendingGreetingIndex: 0 })
-        await appendGreeting(sessionId, docs, pick)
+        await appendGreeting(sessionId, docs, pick, group)
         set({ turns: await getRepo().listTurns(sessionId) })
+      } else {
+        const resolved = docsOfSession(sessionId)
+        group = groupOf(resolved.session, resolved.docs)
       }
 
       const turn: ChatTurn = {
@@ -1075,6 +1472,20 @@ export const useApp = create<AppState>()((set, get) => {
       set({ turns: [...get().turns, turn], error: null })
       localStorage.removeItem(draftKey(sessionId))
       set({ draft: '' })
+      fireThEvent(TH_EVENTS.USER_MESSAGE_RENDERED, turn.idx)
+
+      if (group) {
+        const { docs } = docsOfSession(sessionId)
+        const speakerIds = activateGroup({
+          strategy: group.strategy,
+          members: buildGroupMembers(docs, group),
+          text: content,
+          isUserInput: true,
+        })
+        // 手动模式：用户消息不自动接话，等点名/强制发言
+        if (speakerIds.length > 0) await runGroupRound(sessionId, docs, group, speakerIds, turn.id)
+        return
+      }
 
       await generate(turn.id, 0, wireHistory(get().turns, turn.idx, get().config.imageResendTurns ?? IMAGE_RESEND_TURNS), sessionId)
     },
@@ -1104,7 +1515,21 @@ export const useApp = create<AppState>()((set, get) => {
       set({ turns: turns.map((t) => (t.id === turnId ? updated : t)) })
       await getRepo().updateTurn(updated)
 
-      await generate(turnId, nextIndex, wireHistory(get().turns, turn.idx, get().config.imageResendTurns ?? IMAGE_RESEND_TURNS), turn.sessionId, instruction)
+      clearAutoTimer()
+      const resolved = docsOfSession(turn.sessionId)
+      const group = groupOf(resolved.session, resolved.docs)
+      const speakerName = variant.assistant?.speaker
+      const speakerId =
+        group && speakerName
+          ? resolved.docs.find((d) => d.kind === 'character' && d.name === speakerName)?.id
+          : undefined
+      await generate(
+        turnId,
+        nextIndex,
+        wireHistory(get().turns, turn.idx, get().config.imageResendTurns ?? IMAGE_RESEND_TURNS, Boolean(group)),
+        turn.sessionId,
+        { extraSystem: instruction, speakerId, group }
+      )
     },
 
     async editResend(turnId, newText, attachments) {
@@ -1144,6 +1569,22 @@ export const useApp = create<AppState>()((set, get) => {
       set({ turns: turns.map((t) => (t.id === turnId ? updated : t)), editingTurnId: null })
       await getRepo().updateTurn(updated)
       get().setDraft('')
+      clearAutoTimer()
+
+      const resolved = docsOfSession(turn.sessionId)
+      const group = groupOf(resolved.session, resolved.docs)
+      if (group) {
+        const speakerIds = activateGroup({
+          strategy: group.strategy,
+          members: buildGroupMembers(resolved.docs, group),
+          text: content,
+          isUserInput: true,
+        })
+        if (speakerIds.length > 0) {
+          await runGroupRound(turn.sessionId, resolved.docs, group, speakerIds, turnId, nextIndex)
+        }
+        return
+      }
 
       await generate(turnId, nextIndex, wireHistory(get().turns, turn.idx, get().config.imageResendTurns ?? IMAGE_RESEND_TURNS), turn.sessionId)
     },
@@ -1238,6 +1679,7 @@ export const useApp = create<AppState>()((set, get) => {
       const updated: ChatTurn = { ...turn, active: index }
       set({ turns: turns.map((t) => (t.id === turnId ? updated : t)) })
       await getRepo().updateTurn(updated)
+      fireThEvent(TH_EVENTS.MESSAGE_SWIPED, turn.idx)
     },
 
     /**
@@ -1402,3 +1844,9 @@ export const useApp = create<AppState>()((set, get) => {
     },
   }
 })
+
+bindThStore({
+  getState: () => useApp.getState(),
+  setTurns: (turns) => useApp.getState().setTurns(turns),
+})
+

@@ -1,5 +1,6 @@
 import type { WorldEntry } from './characters'
 import { estimateTokens } from './tokens'
+import type { WireMessage } from './protocol'
 
 /** 一次最多注入多少 token 的设定条目——比「最多几条」更贴近真实开销 */
 const ENTRY_BUDGET = 900
@@ -92,6 +93,52 @@ export function matchWorldEntries(entries: WorldEntry[], contextText: string, li
 export function renderWorldEntries(entries: WorldEntry[]): string {
   if (entries.length === 0) return ''
   return `已知设定：\n${entries.map((e) => `- ${e.content}`).join('\n')}`
+}
+
+/* ---------------- @D 深度注入（ST 的 at_depth 语义） ---------------- */
+
+export interface DepthInjection {
+  content: string
+  /** 距末尾消息的距离：0=贴着最后一条 */
+  depth: number
+  role: 'system' | 'user' | 'assistant'
+}
+
+/** 命中条目分流：普通条目进 world 槽位，at_depth 条目走深度注入 */
+export function splitWorldEntries(entries: WorldEntry[]): { inPrompt: WorldEntry[]; atDepth: WorldEntry[] } {
+  const atDepth: WorldEntry[] = []
+  const inPrompt: WorldEntry[] = []
+  for (const e of entries) {
+    if (e.position === 'at_depth') atDepth.push(e)
+    else inPrompt.push(e)
+  }
+  return { inPrompt, atDepth }
+}
+
+/** 命中的 @D 条目 → 深度注入描述（content 已在 collectEntries 完成宏替换） */
+export function buildDepthInjections(entries: WorldEntry[]): DepthInjection[] {
+  return entries
+    .filter((e) => e.content.trim())
+    .map((e) => ({ content: e.content, depth: e.depth ?? 4, role: 'system' as const }))
+}
+
+/** 把深度注入插进历史：depth d → 距末尾 d 条之前；同深度按传入顺序堆叠，深的大在后插 */
+export function injectDepthMessages(history: WireMessage[], injections: DepthInjection[]): WireMessage[] {
+  if (injections.length === 0) return history
+  const result = [...history]
+  const byDepth = new Map<number, WireMessage[]>()
+  for (const inj of [...injections].sort((a, b) => a.depth - b.depth)) {
+    const msg: WireMessage = { role: inj.role, content: inj.content }
+    const list = byDepth.get(inj.depth) ?? []
+    list.push(msg)
+    byDepth.set(inj.depth, list)
+  }
+  // 从最深处开始插，浅层的索引才不会被挤动
+  for (const [depth, msgs] of [...byDepth.entries()].sort((a, b) => b[0] - a[0])) {
+    const index = Math.max(0, Math.min(result.length - depth, result.length))
+    result.splice(index, 0, ...msgs)
+  }
+  return result
 }
 
 /** 取最近若干条消息作为世界书的扫描窗口 */

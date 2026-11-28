@@ -46,3 +46,13 @@ AI 会读图 + 按你的描述产出正式图标（SVG 源文件、各尺寸 PNG
 还原稳定版（黑白）图标：跟我说一声即可 —— 从 `icon-b.svg` 重新出全套（favicon + `@color/ic_launcher_background` 白底）。
 
 其它候选稿：`icon-a.svg`（对称版）、`icon-dev-grid.svg`（四宫格）、`icon-dev-testcard.svg`（测试卡底）、`icon-dev-blocks.svg`（拼色标志）、`icon-dev-mosaic-pastel.svg`（马赛克浅色版）。
+
+## 吉祥物拆分（`design/icons/mascot-*.svg`）
+
+标志的黑色部分由上下两枚形象组成，已拆成可独立使用的单件：
+
+- `mascot-xiaoda.svg` —— **小答**（上侧）：实心对话气泡 + 镂空双眼，眼睛是 `evenodd` 透明孔；`viewBox="90 0 680 440"`
+- `mascot-xiaowen.svg` —— **小问**（下侧）：空心气泡（stroke 28）+ 三个点；`viewBox="286 570 708 454"`
+- `mascot-xiaoda-white.svg` / `mascot-xiaowen-white.svg` —— 同几何的白色版，用于深底 / 彩底
+- 原稿两枚都朝外出血：小答顶部截平、小问底部两端截平。单枚版只把这两处按原稿同款 **100 半径**补成圆角，其余坐标一个字没动；要严格原样请用 `icon-b-cutout.svg`
+- 出位图：项目无 sharp / puppeteer，用无头 Chrome 截 SVG（宽度 1024，`--default-background-color=00000000` 出透明底）

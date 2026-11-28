@@ -1,4 +1,12 @@
-import { applyMacros, type CharacterCard, type WorldEntry } from './characters'
+import {
+  applyMacros,
+  type CardDepthPrompt,
+  type CardHelperScript,
+  type CardQuickReply,
+  type CardRegexScript,
+  type CharacterCard,
+  type WorldEntry,
+} from './characters'
 import type { EvolutionEntry } from './evolution'
 
 /** 条目与角色卡的世界书条目是同一套结构，直接用同一个类型，避免字段各加一遍 */
@@ -26,6 +34,14 @@ export interface SettingDoc {
   greetings?: string[]
   /** 历史之后的追加指令：每轮都插在对话历史末尾，权重比 system 更高 */
   postHistory?: string
+  /** 卡内正则脚本（ST 的 regex_scripts）：提示词侧清理与显示侧替换共用 */
+  regexScripts?: CardRegexScript[]
+  /** 卡内快捷回复按钮（ST 的 quick_replies）：渲染在输入框上方 */
+  quickReplies?: CardQuickReply[]
+  /** 酒馆助手全局脚本：挂到会话后注入主窗口按卡原样运行 */
+  helperScripts?: CardHelperScript[]
+  /** 卡级深度注入（ext.depth_prompt） */
+  depthPrompt?: CardDepthPrompt
   /** 设定发展模式：这份是某张卡的发展稿，指向原卡 */
   derivedFrom?: string
   /** 发展稿的变更历史，新的在前 */
@@ -90,6 +106,10 @@ export function settingFromCard(card: CharacterCard): SettingDoc {
     firstMessage: card.firstMessage || undefined,
     greetings: card.greetings.length > 0 ? card.greetings : undefined,
     postHistory: card.postHistory,
+    regexScripts: card.regexScripts.length > 0 ? card.regexScripts : undefined,
+    quickReplies: card.quickReplies.length > 0 ? card.quickReplies : undefined,
+    helperScripts: card.helperScripts.length > 0 ? card.helperScripts : undefined,
+    depthPrompt: card.depthPrompt,
     avatar: card.avatar,
     spec: card.spec,
     creator: card.creator,
@@ -249,18 +269,43 @@ export function greetingScript(docs: SettingDoc[], userName: string, pick = 0): 
  * 群聊：场上不止一个角色时，明确告诉模型「一次只说一个人」。
  * 不加这段，多张卡的设定会被混成同一个人说话。
  */
-export function renderCast(docs: SettingDoc[]): string {
+export function renderCast(docs: SettingDoc[], mentionTarget?: string): string {
   // 只有「角色卡」才算同场角色。
   // 写作模式挂的多份是设定文件（世界观、人物小传、规则），按 docs.length 判断
   // 会把「雾港世界观 + 陆行舟」当成两个人对话，直接污染提示词。
   const cast = docs.filter((d) => d.kind === 'character')
   if (cast.length < 2) return ''
   const names = cast.map((d) => d.name).join('、')
+  const targetLine =
+    mentionTarget && cast.some((d) => d.name === mentionTarget)
+      ? [`- 用户这次 @ 了「${mentionTarget}」，本次只以它的身份发言，回复以「**${mentionTarget}**：」开头。`]
+      : []
   return [
     '## 场上角色',
     `这一段对话里同时有：${names}。`,
     '- 每次回复只让一个角色说话，用「**名字**：」开头。',
     '- 不要让多个角色在同一段里轮流念台词，也不要替用户发言。',
     '- 用户可能同时跟几个人说话，按语境判断该谁接；拿不准就让最相关的那位回应。',
+    ...targetLine,
   ].join('\n')
+}
+
+/** 群聊 @点名：最后一条用户消息开头的 @角色名（前缀匹配挂载的角色卡） */
+export function parseMentionTarget(
+  history: Array<{ role: string; content: string }>,
+  docs: SettingDoc[]
+): string | undefined {
+  const lastUser = [...history].reverse().find((m) => m.role === 'user')?.content ?? ''
+  const m = /^\s*@([^\s@]+)/.exec(lastUser)
+  if (!m) return undefined
+  const query = m[1]
+  return docs.find((d) => d.kind === 'character' && d.name.startsWith(query))?.name
+}
+
+/** 群聊发言人归属：@点名优先，否则从回复开头的「**名字**：」/「【名字】」提取（须是场上角色） */
+export function extractSpeaker(answer: string, charNames: string[], target?: string): string | undefined {
+  if (target && charNames.includes(target)) return target
+  const m = /^\s*(?:\*\*([^*]+)\*\*|【([^】]+)】)/.exec(answer)
+  const name = m ? (m[1] ?? m[2])?.trim() : undefined
+  return name && charNames.includes(name) ? name : undefined
 }
